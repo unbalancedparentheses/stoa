@@ -217,6 +217,13 @@ impl ChatApp {
 
     pub fn view(&self) -> Element<'_, Message> {
         let sidebar = ui::sidebar::view(self);
+        let right_panel = ui::right_panel::view(self);
+        let bottom_bar = ui::bottom_bar::view();
+
+        let sep = |_: &Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x1e, 0x28, 0x34))),
+            ..Default::default()
+        };
 
         let content: Element<Message> = match self.view {
             View::Chat => {
@@ -230,18 +237,20 @@ impl ChatApp {
             View::Settings => ui::settings::view(self),
         };
 
-        let separator = container(iced::widget::Space::new())
-            .width(1)
-            .height(Length::Fill)
-            .style(|_theme: &Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x1e, 0x2a, 0x38))),
-                ..Default::default()
-            });
+        let sep_v = || container(iced::widget::Space::new())
+            .width(1).height(Length::Fill).style(sep);
 
-        let layout = row![
-            container(sidebar).width(280),
-            separator,
+        let main_row = row![
+            sidebar,
+            sep_v(),
             container(content).width(Length::Fill),
+            sep_v(),
+            right_panel,
+        ];
+
+        let layout = column![
+            container(main_row).height(Length::Fill),
+            bottom_bar,
         ];
 
         container(layout)
