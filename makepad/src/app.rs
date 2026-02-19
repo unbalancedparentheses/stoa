@@ -639,12 +639,12 @@ impl AppMain for App {
             self.update_settings_ui(cx);
         }
 
-        // Dispatch to WidgetMatchEvent
-        self.widget_match_event(cx, event, &mut Scope::empty());
-
-        // Propagate to UI widgets with app data in scope
+        // Propagate to UI widgets first (generates actions)
         let mut scope = Scope::with_data(&mut self.data);
         self.ui.handle_event(cx, event, &mut scope);
+
+        // Then dispatch to WidgetMatchEvent (processes actions + HTTP events)
+        self.widget_match_event(cx, event, &mut Scope::empty());
     }
 }
 
