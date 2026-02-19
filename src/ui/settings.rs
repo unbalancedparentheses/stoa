@@ -4,16 +4,16 @@ use iced::{Alignment, Element, Length, Color, Border, Theme};
 use crate::app::{ChatApp, Message};
 use crate::model::Provider;
 
-const MAIN_BG: Color = Color::from_rgb8(0x13, 0x1a, 0x24);
-const HEADER_BG: Color = Color::from_rgb8(0x11, 0x19, 0x22);
-const CARD_BG: Color = Color::from_rgb8(0x15, 0x1d, 0x28);
-const INPUT_BG: Color = Color::from_rgb8(0x10, 0x17, 0x20);
+const MAIN_BG: Color = Color::from_rgb8(0x16, 0x1e, 0x2a);
+const HEADER_BG: Color = Color::from_rgb8(0x14, 0x1c, 0x26);
+const CARD_BG: Color = Color::from_rgb8(0x1a, 0x24, 0x30);
+const INPUT_BG: Color = Color::from_rgb8(0x12, 0x1a, 0x24);
 const ACCENT: Color = Color::from_rgb8(0xc9, 0xa8, 0x4c);
-const TEXT_PRIMARY: Color = Color::from_rgb8(0xe6, 0xed, 0xf3);
-const TEXT_SECONDARY: Color = Color::from_rgb8(0x8b, 0x94, 0x9e);
-const TEXT_MUTED: Color = Color::from_rgb8(0x4a, 0x54, 0x60);
-const BORDER_DEFAULT: Color = Color::from_rgb8(0x2a, 0x3a, 0x4e);
-const BORDER_SUBTLE: Color = Color::from_rgb8(0x1e, 0x2a, 0x38);
+const TEXT_PRIMARY: Color = Color::from_rgb8(0xe8, 0xe0, 0xd0);
+const TEXT_SECONDARY: Color = Color::from_rgb8(0x8a, 0x90, 0x9a);
+const TEXT_MUTED: Color = Color::from_rgb8(0x50, 0x5a, 0x66);
+const BORDER_DEFAULT: Color = Color::from_rgb8(0x3a, 0x4a, 0x5a);
+const BORDER_SUBTLE: Color = Color::from_rgb8(0x1e, 0x28, 0x34);
 
 fn field_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
