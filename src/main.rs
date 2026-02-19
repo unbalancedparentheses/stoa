@@ -2,20 +2,14 @@ mod api;
 mod app;
 mod config;
 mod model;
-mod ui;
+mod widgets;
 
-use app::ChatApp;
+pub use app::App;
+pub use app::live_design;
+use makepad_widgets::*;
 
-fn main() -> iced::Result {
-    eprintln!("[rust-chat] starting...");
+app_main!(App);
 
-    let result = iced::application(ChatApp::new, ChatApp::update, ChatApp::view)
-        .title("Morphe Chat")
-        .subscription(ChatApp::subscription)
-        .theme(ChatApp::theme)
-        .window_size((1200.0, 800.0))
-        .run();
-
-    eprintln!("[rust-chat] exited with: {result:?}");
-    result
+fn main() {
+    app_main();
 }
