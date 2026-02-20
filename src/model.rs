@@ -45,6 +45,7 @@ pub enum Provider {
     OpenAI,
     Anthropic,
     Ollama,
+    OpenRouter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

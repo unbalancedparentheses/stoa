@@ -152,21 +152,56 @@ src/
 
 ## Comparison
 
-| | Stoa | BoltAI | msty | Cherry Studio | Jan |
-|---|---|---|---|---|---|
-| Native (no Electron) | Rust/GPU | macOS | Electron | Electron | Electron |
-| Parallel multi-model | Yes | No | Split Chat | Yes | No |
-| Side-by-side comparison | Yes | No | Yes | No | No |
-| Response diffing | Yes | No | No | No | No |
-| Cost tracking | Yes | No | No | No | No |
-| Model ratings + analytics | Yes | No | No | No | No |
-| Quick Switcher / Cmd Palette | Yes | No | No | No | No |
-| Conversation forking | Yes | No | No | No | No |
-| File attachment | Yes | Yes | No | Yes | No |
-| Ollama local LLMs | Yes | Yes | Yes | Yes | Yes |
-| Open source | Yes | No | No | Yes | Yes |
-| Cross-platform | Yes | macOS only | Yes | Yes | Yes |
-| Price | Free | $29.99 | Freemium | Free | Free |
+| Feature | **Stoa** | **BoltAI** | **msty** | **Cherry Studio** | **Jan** | **AnythingLLM** | **MindMac** | **TypingMind** | **Open WebUI** | **LibreChat** | **Chatbox AI** |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Platform | Rust/GPU native | macOS | Mac/Win/Linux | Mac/Win/Linux | Mac/Win/Linux | Mac/Win/Linux | macOS | Web (PWA) | Web (self-host) | Web (self-host) | All platforms |
+| Open source | Yes | No | No | Yes (AGPL) | Yes (AGPL) | Yes (MIT) | No | No | Custom | Yes (MIT) | GPLv3/closed |
+| Price | Free | $37-57 | Free/$149yr | Free | Free | Free | $29-69 | $39-79 | Free | Free | Free/paid |
+| Multi-model parallel | **Yes** | No | Yes | Yes | No | No | No | Yes | Yes | No | No |
+| Side-by-side comparison | **Yes** | No | Yes | Yes | No | No | No | Yes | Yes | No | No |
+| Response diffing | **Yes** | No | No | No | No | No | No | No | No | No | No |
+| Local LLMs (Ollama) | **Yes** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Cloud providers | OpenAI, Anthropic, OpenRouter | 6+ | 10+ | 50+ | 5+ | 3+ | 7+ | Many | OpenAI-compat | 8+ | Many |
+| RAG / Knowledge base | No | No | Yes | Yes | No | **Yes** | No | Yes | **Yes** | No | Yes |
+| AI Agents / MCP | No | Yes | Yes | Yes | Yes | **Yes** | No | Yes | **Yes** | **Yes** | Yes |
+| Cost tracking | **Yes** | No | Yes | No | No | Partial | **Yes** | Partial | **Yes** | Yes | No |
+| Command palette | **Yes** | No | No | No | No | No | No | No | No | No | No |
+| Quick switcher | **Yes** | No | No | No | No | No | No | No | No | No | No |
+| Conversation forking | **Yes** | Yes | Yes | No | No | No | No | Yes | Partial | **Yes** | No |
+| Tags / Organization | **Yes** | Yes | ? | Yes | ? | Yes | Yes | Yes | **Yes** | Yes | ? |
+| File attachment | **Yes** (text) | Yes (all) | Yes | Yes | Yes | **Yes** | Yes | Yes | **Yes** | **Yes** | Yes |
+| Image/Vision | No | Yes | ? | Yes | Yes | Yes | Yes | ? | **Yes** | **Yes** | Yes |
+| Export | MD clipboard | PDF/MD/HTML | Yes | MD/Word | Partial | Yes | PDF/MD | ? | JSON | MD/JSON/PNG | HTML/MD |
+| Search | **Yes** | Yes | ? | Yes | ? | Yes | Yes | Yes | **Yes** | **Yes** | Yes |
+| Plugins/Extensions | No | Yes | Yes | Yes | Yes | **Yes** | No | Yes | **Yes** | **Yes** | Yes |
+| Analytics/Stats | **Yes** | No | Yes | No | No | Partial | Yes | No | **Yes** | Partial | No |
+| Response ratings | **Yes** | No | No | No | No | No | No | No | **Yes** | No | No |
+| Streaming markdown | **Yes** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | **Yes** | Yes | Yes |
+| Web search | No | Yes | Yes | ? | ? | ? | Yes | Yes | **Yes** | Yes | ? |
+| Voice I/O | No | Yes | ? | ? | ? | ? | ? | ? | **Yes** | Yes | ? |
+
+### Stoa's Unique Advantages
+
+- **Response diffing** — Word-level LCS diff with agreement percentage. No competitor has this.
+- **Command palette + Quick switcher** — Obsidian-style keyboard-driven navigation.
+- **Native Rust/GPU** — Not Electron, not Tauri, not web. Pure Rust + wgpu rendering.
+- **Per-conversation system prompts** — Different personas per research thread.
+- **Model analytics with approval rates** — Track which models perform best over time.
+
+### Roadmap
+
+- [ ] OpenRouter provider (access to 200+ models via single API)
+- [ ] Image/Vision support for multimodal models
+- [ ] Web search integration
+- [ ] MCP tool support
+- [ ] RAG / Knowledge base
+- [ ] Richer export (PDF, HTML, JSON)
+- [ ] PDF/DOCX file attachment
+- [ ] Import from ChatGPT/Claude exports
+- [ ] Conversation folders (nested)
+- [ ] Plugin system
+- [ ] Voice input/output
+- [ ] Cross-platform testing (Windows, Linux)
 
 ## License
 
