@@ -9,6 +9,8 @@ pub struct AppConfig {
     pub anthropic: ProviderConfig,
     #[serde(default = "ProviderConfig::default_ollama")]
     pub ollama: ProviderConfig,
+    #[serde(default = "ProviderConfig::default_openrouter")]
+    pub openrouter: ProviderConfig,
     #[serde(default)]
     pub system_prompt: String,
     #[serde(default = "default_temperature")]
@@ -31,6 +33,7 @@ impl Default for AppConfig {
             openai: ProviderConfig::default_openai(),
             anthropic: ProviderConfig::default_anthropic(),
             ollama: ProviderConfig::default_ollama(),
+            openrouter: ProviderConfig::default_openrouter(),
             system_prompt: String::new(),
             temperature: "0.7".to_string(),
             max_tokens: "4096".to_string(),
@@ -73,6 +76,7 @@ impl AppConfig {
             Provider::OpenAI => &self.openai,
             Provider::Anthropic => &self.anthropic,
             Provider::Ollama => &self.ollama,
+            Provider::OpenRouter => &self.openrouter,
         }
     }
 
@@ -81,12 +85,12 @@ impl AppConfig {
             Provider::OpenAI => &mut self.openai,
             Provider::Anthropic => &mut self.anthropic,
             Provider::Ollama => &mut self.ollama,
+            Provider::OpenRouter => &mut self.openrouter,
         }
     }
 
-    /// Build a ProviderConfig for a specific model id, using the stored API keys/URLs.
     pub fn provider_config_for_model(&self, model: &str) -> ProviderConfig {
-        // Check if it's an Ollama model
+        // Ollama models (discovered)
         if self.ollama_models.contains(&model.to_string()) {
             return ProviderConfig {
                 provider: Provider::Ollama,
@@ -95,11 +99,18 @@ impl AppConfig {
                 model: model.to_string(),
             };
         }
-        let is_anthropic = model.contains("claude")
-            || model.contains("anthropic")
-            || model.contains("haiku")
-            || model.contains("sonnet")
-            || model.contains("opus");
+        // OpenRouter models (contain /)
+        if model.contains('/') {
+            return ProviderConfig {
+                provider: Provider::OpenRouter,
+                api_url: self.openrouter.api_url.clone(),
+                api_key: self.openrouter.api_key.clone(),
+                model: model.to_string(),
+            };
+        }
+        // Anthropic models
+        let is_anthropic = model.contains("claude") || model.contains("anthropic")
+            || model.contains("haiku") || model.contains("sonnet") || model.contains("opus");
         if is_anthropic {
             ProviderConfig {
                 provider: Provider::Anthropic,
@@ -117,7 +128,7 @@ impl AppConfig {
         }
     }
 
-    /// Hardcoded list of cloud (display_name, model_id).
+    /// Hardcoded cloud models (direct API).
     pub fn available_models() -> Vec<(&'static str, &'static str)> {
         vec![
             ("GPT-4.1", "gpt-4.1"),
@@ -130,12 +141,32 @@ impl AppConfig {
         ]
     }
 
-    /// All models: cloud + discovered Ollama models.
+    /// OpenRouter models (accessed via OpenRouter API).
+    pub fn openrouter_models() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("Gemini 2.5 Flash", "google/gemini-2.5-flash-preview"),
+            ("Gemini 2.5 Pro", "google/gemini-2.5-pro-preview"),
+            ("Llama 4 Maverick", "meta-llama/llama-4-maverick"),
+            ("Llama 4 Scout", "meta-llama/llama-4-scout"),
+            ("Mistral Large", "mistralai/mistral-large-2411"),
+            ("DeepSeek R1", "deepseek/deepseek-r1"),
+            ("DeepSeek V3", "deepseek/deepseek-chat"),
+            ("Qwen3 235B", "qwen/qwen3-235b-a22b"),
+        ]
+    }
+
+    /// All models: direct API + OpenRouter + Ollama.
     pub fn all_models(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Self::available_models()
             .iter()
             .map(|(d, id)| (d.to_string(), id.to_string()))
             .collect();
+        // OpenRouter models (only if key is configured)
+        if !self.openrouter.api_key.is_empty() {
+            for (d, id) in Self::openrouter_models() {
+                out.push((d.to_string(), id.to_string()));
+            }
+        }
         for m in &self.ollama_models {
             out.push((m.clone(), m.clone()));
         }
@@ -144,34 +175,13 @@ impl AppConfig {
 
     pub fn apply_preset(&mut self, preset: &str) {
         match preset {
-            "GPT-5" => {
-                self.active_provider = Provider::OpenAI;
-                self.openai.model = "gpt-5".to_string();
-            }
-            "GPT-4.1" => {
-                self.active_provider = Provider::OpenAI;
-                self.openai.model = "gpt-4.1".to_string();
-            }
-            "o3" => {
-                self.active_provider = Provider::OpenAI;
-                self.openai.model = "o3".to_string();
-            }
-            "o4-mini" => {
-                self.active_provider = Provider::OpenAI;
-                self.openai.model = "o4-mini".to_string();
-            }
-            "Opus" => {
-                self.active_provider = Provider::Anthropic;
-                self.anthropic.model = "claude-opus-4-20250514".to_string();
-            }
-            "Sonnet" => {
-                self.active_provider = Provider::Anthropic;
-                self.anthropic.model = "claude-sonnet-4-20250514".to_string();
-            }
-            "Haiku" => {
-                self.active_provider = Provider::Anthropic;
-                self.anthropic.model = "claude-haiku-4-5-20251001".to_string();
-            }
+            "GPT-5" => { self.active_provider = Provider::OpenAI; self.openai.model = "gpt-5".to_string(); }
+            "GPT-4.1" => { self.active_provider = Provider::OpenAI; self.openai.model = "gpt-4.1".to_string(); }
+            "o3" => { self.active_provider = Provider::OpenAI; self.openai.model = "o3".to_string(); }
+            "o4-mini" => { self.active_provider = Provider::OpenAI; self.openai.model = "o4-mini".to_string(); }
+            "Opus" => { self.active_provider = Provider::Anthropic; self.anthropic.model = "claude-opus-4-20250514".to_string(); }
+            "Sonnet" => { self.active_provider = Provider::Anthropic; self.anthropic.model = "claude-sonnet-4-20250514".to_string(); }
+            "Haiku" => { self.active_provider = Provider::Anthropic; self.anthropic.model = "claude-haiku-4-5-20251001".to_string(); }
             _ => {}
         }
     }

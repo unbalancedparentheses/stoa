@@ -11,13 +11,24 @@ fn to_anthropic_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         .iter()
         .filter(|m| !m.streaming)
         .map(|m| {
-            serde_json::json!({
-                "role": match m.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                },
-                "content": m.content,
-            })
+            let role = match m.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+            };
+            // If message has images, use content array for vision
+            if !m.images.is_empty() && m.role == Role::User {
+                let mut content_parts = Vec::new();
+                for img_b64 in &m.images {
+                    content_parts.push(serde_json::json!({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": img_b64}
+                    }));
+                }
+                content_parts.push(serde_json::json!({"type": "text", "text": m.content}));
+                serde_json::json!({"role": role, "content": content_parts})
+            } else {
+                serde_json::json!({"role": role, "content": m.content})
+            }
         })
         .collect()
 }

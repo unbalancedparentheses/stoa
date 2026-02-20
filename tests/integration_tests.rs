@@ -106,6 +106,7 @@ fn fork_creates_correct_copy() {
         token_count: None,
         rating: 1,
         latency_ms: Some(500),
+        images: Vec::new(),
     });
     conv.add_user_message("question 2", Some("gpt-4.1".to_string()));
     conv.messages.push(ChatMessage {
@@ -116,6 +117,7 @@ fn fork_creates_correct_copy() {
         token_count: None,
         rating: 0,
         latency_ms: None,
+        images: Vec::new(),
     });
 
     // Fork at message index 1 (after first Q&A)
@@ -283,6 +285,7 @@ fn conversation_cost_sums_all_messages() {
             token_count: Some(100),
             rating: 0,
             latency_ms: None,
+            images: Vec::new(),
         },
         ChatMessage {
             role: Role::Assistant,
@@ -292,6 +295,7 @@ fn conversation_cost_sums_all_messages() {
             token_count: Some(200),
             rating: 0,
             latency_ms: None,
+            images: Vec::new(),
         },
     ];
     let total = cost::conversation_cost(&messages);
@@ -312,6 +316,7 @@ fn conversation_cost_skips_streaming() {
             token_count: None,
             rating: 0,
             latency_ms: None,
+            images: Vec::new(),
         },
     ];
     assert_eq!(cost::conversation_cost(&messages), 0.0);
@@ -410,6 +415,7 @@ fn export_with_messages() {
         token_count: None,
         rating: 0,
         latency_ms: None,
+        images: Vec::new(),
     });
     let md = export::conversation_to_markdown(&conv);
     assert!(md.contains("# Test Export"));
@@ -439,6 +445,7 @@ fn export_skips_streaming() {
         token_count: None,
         rating: 0,
         latency_ms: None,
+        images: Vec::new(),
     });
     let md = export::conversation_to_markdown(&conv);
     assert!(!md.contains("streaming..."));
@@ -463,6 +470,7 @@ fn db_roundtrip_conversation() {
         token_count: Some(42),
         rating: 1,
         latency_ms: Some(350),
+        images: Vec::new(),
     });
 
     stoa::db::save_conversation(&conn, &conv);
@@ -617,4 +625,179 @@ fn db_system_prompt_persists() {
 
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].system_prompt, "You are a helpful assistant");
+}
+
+// ── OpenRouter Config Tests ──────────────────────────────────
+
+#[test]
+fn config_openrouter_models_list() {
+    let models = AppConfig::openrouter_models();
+    assert!(models.len() >= 6);
+    let ids: Vec<&str> = models.iter().map(|(_, id)| *id).collect();
+    assert!(ids.iter().any(|id| id.contains("google/")));
+    assert!(ids.iter().any(|id| id.contains("meta-llama/")));
+    assert!(ids.iter().any(|id| id.contains("deepseek/")));
+}
+
+#[test]
+fn config_all_models_includes_openrouter_when_key_set() {
+    let mut config = AppConfig::default();
+    config.openrouter.api_key = "test-key".to_string();
+    let all = config.all_models();
+    let ids: Vec<String> = all.iter().map(|(_, id)| id.clone()).collect();
+    assert!(ids.iter().any(|id| id.contains("google/")));
+}
+
+#[test]
+fn config_all_models_excludes_openrouter_without_key() {
+    let config = AppConfig::default();
+    let all = config.all_models();
+    let ids: Vec<String> = all.iter().map(|(_, id)| id.clone()).collect();
+    assert!(!ids.iter().any(|id| id.contains("google/")));
+}
+
+#[test]
+fn config_provider_routes_openrouter_by_slash() {
+    let config = AppConfig::default();
+    let pc = config.provider_config_for_model("google/gemini-2.5-flash-preview");
+    assert_eq!(pc.provider, Provider::OpenRouter);
+}
+
+#[test]
+fn default_openrouter_config() {
+    let pc = ProviderConfig::default_openrouter();
+    assert_eq!(pc.provider, Provider::OpenRouter);
+    assert!(pc.api_url.contains("openrouter.ai"));
+    assert!(pc.api_key.is_empty());
+}
+
+// ── Image Support Tests ──────────────────────────────────────
+
+#[test]
+fn add_user_message_with_images() {
+    let mut conv = Conversation::new();
+    conv.add_user_message_with_images("describe this", None, vec!["base64data".to_string()]);
+    assert_eq!(conv.messages.len(), 1);
+    assert_eq!(conv.messages[0].images.len(), 1);
+    assert_eq!(conv.messages[0].images[0], "base64data");
+    assert_eq!(conv.messages[0].content, "describe this");
+}
+
+#[test]
+fn add_user_message_no_images_default() {
+    let mut conv = Conversation::new();
+    conv.add_user_message("test", None);
+    assert!(conv.messages[0].images.is_empty());
+}
+
+// ── Folder Tests ─────────────────────────────────────────────
+
+#[test]
+fn conversation_folder_default_none() {
+    let conv = Conversation::new();
+    assert_eq!(conv.folder, None);
+}
+
+#[test]
+fn db_folder_persists() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.folder = Some("research".to_string());
+    stoa::db::save_conversation(&conn, &conv);
+
+    let loaded = stoa::db::load_all(&conn);
+    assert_eq!(loaded[0].folder, Some("research".to_string()));
+}
+
+#[test]
+fn fork_inherits_folder() {
+    let mut conv = Conversation::new();
+    conv.folder = Some("physics".to_string());
+    conv.add_user_message("test", None);
+    let forked = conv.fork(0);
+    assert_eq!(forked.folder, Some("physics".to_string()));
+}
+
+// ── Export Format Tests ──────────────────────────────────────
+
+#[test]
+fn export_json_roundtrip() {
+    let mut conv = Conversation::new();
+    conv.title = "JSON Test".to_string();
+    conv.add_user_message("hello", None);
+    let json = stoa::export::conversation_to_json(&conv);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["title"].as_str().unwrap(), "JSON Test");
+}
+
+#[test]
+fn export_html_contains_structure() {
+    let mut conv = Conversation::new();
+    conv.title = "HTML Test".to_string();
+    conv.add_user_message("hello", None);
+    conv.messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "world".to_string(),
+        streaming: false,
+        model: Some("gpt-4.1".to_string()),
+        token_count: Some(10),
+        rating: 0,
+        latency_ms: Some(100),
+        images: Vec::new(),
+    });
+    let html = stoa::export::conversation_to_html(&conv);
+    assert!(html.contains("<!DOCTYPE html>"));
+    assert!(html.contains("HTML Test"));
+    assert!(html.contains("hello"));
+    assert!(html.contains("world"));
+    assert!(html.contains("gpt-4.1"));
+    assert!(html.contains("10 tokens"));
+    assert!(html.contains("100 ms"));
+}
+
+// ── Import Tests ─────────────────────────────────────────────
+
+#[test]
+fn import_chatgpt_empty() {
+    let convs = stoa::import::import_chatgpt("[]");
+    assert!(convs.is_empty());
+}
+
+#[test]
+fn import_chatgpt_invalid_json() {
+    let convs = stoa::import::import_chatgpt("not json");
+    assert!(convs.is_empty());
+}
+
+// ── Web Search Tests ─────────────────────────────────────────
+
+#[test]
+fn web_search_format_results_empty() {
+    let formatted = stoa::web_search::format_results(&[]);
+    assert!(formatted.is_empty());
+}
+
+#[test]
+fn web_search_format_results_with_data() {
+    let results = vec![
+        stoa::web_search::SearchResult {
+            title: "Test".to_string(),
+            snippet: "A test result".to_string(),
+            url: "https://example.com".to_string(),
+        },
+    ];
+    let formatted = stoa::web_search::format_results(&results);
+    assert!(formatted.contains("[Web search results]"));
+    assert!(formatted.contains("Test"));
+    assert!(formatted.contains("A test result"));
+    assert!(formatted.contains("https://example.com"));
+}
+
+// ── Cost Tests for OpenRouter Models ─────────────────────────
+
+#[test]
+fn openrouter_models_are_free_in_cost() {
+    // OpenRouter models not in pricing table = free (cost handled by OpenRouter billing)
+    let cost = stoa::cost::message_cost("google/gemini-2.5-flash-preview", &Role::Assistant, 1000);
+    assert_eq!(cost, 0.0);
 }
