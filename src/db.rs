@@ -2,17 +2,16 @@ use rusqlite::{Connection, params};
 
 use crate::model::{ChatMessage, Conversation, Role};
 
-pub fn open() -> Connection {
-    let dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("rust-chat");
-    std::fs::create_dir_all(&dir).ok();
-    let path = dir.join("chat.db");
-    let conn = Connection::open(&path).expect("failed to open database");
+/// Open an in-memory database for testing.
+pub fn open_in_memory() -> Connection {
+    let conn = Connection::open_in_memory().expect("failed to open in-memory database");
+    init_schema(&conn);
+    conn
+}
 
+fn init_schema(conn: &Connection) {
     conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA foreign_keys = ON;
+        "PRAGMA foreign_keys = ON;
 
          CREATE TABLE IF NOT EXISTS conversations (
              id TEXT PRIMARY KEY,
@@ -29,27 +28,29 @@ pub fn open() -> Connection {
          );"
     ).expect("failed to create tables");
 
-    // Migration: add updated_at if missing (existing DBs)
+    // Migrations (idempotent)
     conn.execute("ALTER TABLE conversations ADD COLUMN updated_at TEXT", []).ok();
-    conn.execute("UPDATE conversations SET updated_at = datetime('now') WHERE updated_at IS NULL", []).ok();
-
-    // Migration: add model column to messages
     conn.execute("ALTER TABLE messages ADD COLUMN model TEXT", []).ok();
-
-    // Migration: add tags and pinned to conversations
     conn.execute("ALTER TABLE conversations ADD COLUMN tags TEXT DEFAULT ''", []).ok();
     conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0", []).ok();
-
-    // Migration: add token_count to messages
     conn.execute("ALTER TABLE messages ADD COLUMN token_count INTEGER", []).ok();
-
-    // Migration: system_prompt and forked_from on conversations
     conn.execute("ALTER TABLE conversations ADD COLUMN system_prompt TEXT DEFAULT ''", []).ok();
     conn.execute("ALTER TABLE conversations ADD COLUMN forked_from TEXT", []).ok();
-
-    // Migration: rating and latency_ms on messages
     conn.execute("ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT 0", []).ok();
     conn.execute("ALTER TABLE messages ADD COLUMN latency_ms INTEGER", []).ok();
+}
+
+pub fn open() -> Connection {
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("rust-chat");
+    std::fs::create_dir_all(&dir).ok();
+    let path = dir.join("chat.db");
+    let conn = Connection::open(&path).expect("failed to open database");
+
+    conn.execute_batch("PRAGMA journal_mode = WAL;").ok();
+    init_schema(&conn);
+    conn.execute("UPDATE conversations SET updated_at = datetime('now') WHERE updated_at IS NULL", []).ok();
 
     migrate_from_json(&conn);
     conn
