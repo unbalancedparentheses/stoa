@@ -348,14 +348,14 @@ impl ChatApp {
 
     pub fn theme(&self) -> Theme {
         Theme::custom(
-            "Morphe".to_string(),
+            "Stoa".to_string(),
             iced::theme::Palette {
-                background: Color::from_rgb8(0x11, 0x19, 0x22),
-                text: Color::from_rgb8(0xe6, 0xed, 0xf3),
-                primary: Color::from_rgb8(0x4a, 0x9e, 0xc9),
-                success: Color::from_rgb8(0x3f, 0xb8, 0x8c),
-                warning: Color::from_rgb8(0xd4, 0xa5, 0x4e),
-                danger: Color::from_rgb8(0xda, 0x6b, 0x6b),
+                background: Color::from_rgb8(0x10, 0x12, 0x18),
+                text: Color::from_rgb8(0xec, 0xed, 0xf0),
+                primary: Color::from_rgb8(0x6e, 0xa0, 0xd4),
+                success: Color::from_rgb8(0x50, 0xc0, 0x8a),
+                warning: Color::from_rgb8(0xd0, 0xa0, 0x50),
+                danger: Color::from_rgb8(0xe0, 0x60, 0x60),
             },
         )
     }
