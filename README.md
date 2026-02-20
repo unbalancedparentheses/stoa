@@ -1,10 +1,10 @@
-# Nous
+# Stoa
 
 A native AI research platform built with Rust. Send the same prompt to multiple models simultaneously, compare responses side-by-side, diff where they agree or disagree, and track costs — all from a single keyboard-driven interface. Zero Electron, zero JavaScript.
 
-## Why Nous?
+## Why Stoa?
 
-Most AI chat apps let you talk to one model at a time. Nous lets you **interrogate multiple models in parallel** and see where they converge or diverge. Built for researchers, engineers, and anyone who wants to think harder with AI.
+Most AI chat apps let you talk to one model at a time. Stoa lets you **interrogate multiple models in parallel** and see where they converge or diverge. Built for researchers, engineers, and anyone who wants to think harder with AI.
 
 - **Native performance** — Pure Rust + GPU rendering via [iced](https://github.com/iced-rs/iced). Starts instantly, uses minimal resources.
 - **Local-first** — All data stays on your machine. SQLite database, no cloud sync, no telemetry.
@@ -66,8 +66,8 @@ Most AI chat apps let you talk to one model at a time. Nous lets you **interroga
 ### Build & Run
 
 ```sh
-git clone https://github.com/unbalancedparentheses/rust-chat
-cd rust-chat
+git clone https://github.com/unbalancedparentheses/stoa
+cd stoa
 cargo run --release
 ```
 
@@ -80,7 +80,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 # Pull a model
 ollama pull llama3.2
 
-# Nous auto-discovers local models on startup
+# Stoa auto-discovers local models on startup
 ```
 
 ## Usage
@@ -109,7 +109,7 @@ Type a message, press Enter. Goes to the model shown in the picker chip.
 
 ## Configuration
 
-Settings are at `~/.config/rust-chat/config.json`. Conversations at `~/.config/rust-chat/chat.db`.
+Settings are at `~/.config/stoa/config.json`. Conversations at `~/.config/stoa/chat.db`.
 
 | Setting | Description |
 |---------|-------------|
@@ -152,7 +152,7 @@ src/
 
 ## Comparison
 
-| | Nous | BoltAI | msty | Cherry Studio | Jan |
+| | Stoa | BoltAI | msty | Cherry Studio | Jan |
 |---|---|---|---|---|---|
 | Native (no Electron) | Rust/GPU | macOS | Electron | Electron | Electron |
 | Parallel multi-model | Yes | No | Split Chat | Yes | No |

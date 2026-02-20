@@ -118,7 +118,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         column![
             text("Workspace").size(11).color(TEXT_MUTED),
             row![
-                text("rust-chat").size(16).color(TEXT_HEAD),
+                text("Stoa").size(16).color(TEXT_HEAD),
                 text("  v0.1.0").size(11).color(TEXT_MUTED),
             ].align_y(Alignment::End),
         ].spacing(3)

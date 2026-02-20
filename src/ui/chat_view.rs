@@ -342,7 +342,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let model = short_model_name(&app.selected_model);
         messages_col = messages_col.push(
             container(column![
-                text("rust-chat").size(24).color(TEXT_HEAD),
+                text("Stoa").size(24).color(TEXT_HEAD),
                 text("Share a thought to get started.").size(13).color(TEXT_MUTED),
                 iced::widget::Space::new().height(8),
                 text(format!("Model: {model}")).size(11).color(TEXT_MUTED).font(iced::Font::MONOSPACE),

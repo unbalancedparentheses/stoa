@@ -44,7 +44,7 @@ impl AppConfig {
     fn config_path() -> std::path::PathBuf {
         let dir = dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("rust-chat");
+            .join("stoa");
         std::fs::create_dir_all(&dir).ok();
         dir.join("config.json")
     }

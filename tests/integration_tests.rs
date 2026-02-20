@@ -1,8 +1,8 @@
-use rust_chat::model::*;
-use rust_chat::config::AppConfig;
-use rust_chat::cost;
-use rust_chat::diff;
-use rust_chat::export;
+use stoa::model::*;
+use stoa::config::AppConfig;
+use stoa::cost;
+use stoa::diff;
+use stoa::export;
 
 // ── Model Tests ──────────────────────────────────────────────
 
@@ -448,7 +448,7 @@ fn export_skips_streaming() {
 
 #[test]
 fn db_roundtrip_conversation() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.title = "DB Test".to_string();
     conv.tags = vec!["test".to_string()];
@@ -465,8 +465,8 @@ fn db_roundtrip_conversation() {
         latency_ms: Some(350),
     });
 
-    rust_chat::db::save_conversation(&conn, &conv);
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::save_conversation(&conn, &conv);
+    let loaded = stoa::db::load_all(&conn);
 
     assert_eq!(loaded.len(), 1);
     let c = &loaded[0];
@@ -484,114 +484,114 @@ fn db_roundtrip_conversation() {
 
 #[test]
 fn db_delete_conversation() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    rust_chat::db::save_conversation(&conn, &conv);
-    assert_eq!(rust_chat::db::load_all(&conn).len(), 1);
+    stoa::db::save_conversation(&conn, &conv);
+    assert_eq!(stoa::db::load_all(&conn).len(), 1);
 
-    rust_chat::db::delete_conversation(&conn, &conv.id);
-    assert_eq!(rust_chat::db::load_all(&conn).len(), 0);
+    stoa::db::delete_conversation(&conn, &conv.id);
+    assert_eq!(stoa::db::load_all(&conn).len(), 0);
 }
 
 #[test]
 fn db_rename_conversation() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    rust_chat::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv);
 
-    rust_chat::db::rename_conversation(&conn, &conv.id, "Renamed");
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::rename_conversation(&conn, &conv.id, "Renamed");
+    let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].title, "Renamed");
 }
 
 #[test]
 fn db_toggle_pin() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    rust_chat::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv);
 
-    rust_chat::db::toggle_pin(&conn, &conv.id, true);
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::toggle_pin(&conn, &conv.id, true);
+    let loaded = stoa::db::load_all(&conn);
     assert!(loaded[0].pinned);
 
-    rust_chat::db::toggle_pin(&conn, &conv.id, false);
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::toggle_pin(&conn, &conv.id, false);
+    let loaded = stoa::db::load_all(&conn);
     assert!(!loaded[0].pinned);
 }
 
 #[test]
 fn db_set_tags() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    rust_chat::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv);
 
-    rust_chat::db::set_tags(&conn, &conv.id, &["alpha".to_string(), "beta".to_string()]);
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::set_tags(&conn, &conv.id, &["alpha".to_string(), "beta".to_string()]);
+    let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].tags, vec!["alpha", "beta"]);
 }
 
 #[test]
 fn db_search_conversations() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
 
     let mut conv1 = Conversation::new();
     conv1.title = "Physics Research".to_string();
     conv1.add_user_message("What is quantum entanglement?", None);
-    rust_chat::db::save_conversation(&conn, &conv1);
+    stoa::db::save_conversation(&conn, &conv1);
 
     let mut conv2 = Conversation::new();
     conv2.title = "Cooking Tips".to_string();
     conv2.add_user_message("How to make pasta?", None);
-    rust_chat::db::save_conversation(&conn, &conv2);
+    stoa::db::save_conversation(&conn, &conv2);
 
     // Search by title
-    let results = rust_chat::db::search_conversations(&conn, "Physics");
+    let results = stoa::db::search_conversations(&conn, "Physics");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], conv1.id);
 
     // Search by message content
-    let results = rust_chat::db::search_conversations(&conn, "quantum");
+    let results = stoa::db::search_conversations(&conn, "quantum");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], conv1.id);
 
     // Search that matches nothing
-    let results = rust_chat::db::search_conversations(&conn, "javascript");
+    let results = stoa::db::search_conversations(&conn, "javascript");
     assert!(results.is_empty());
 
     // Search that matches both (via content)
-    let results = rust_chat::db::search_conversations(&conn, "What");
+    let results = stoa::db::search_conversations(&conn, "What");
     assert_eq!(results.len(), 1); // only conv1 has "What"
 }
 
 #[test]
 fn db_pinned_sort_first() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
 
     let mut conv1 = Conversation::new();
     conv1.title = "Unpinned".to_string();
-    rust_chat::db::save_conversation(&conn, &conv1);
+    stoa::db::save_conversation(&conn, &conv1);
 
     let mut conv2 = Conversation::new();
     conv2.title = "Pinned".to_string();
     conv2.pinned = true;
-    rust_chat::db::save_conversation(&conn, &conv2);
+    stoa::db::save_conversation(&conn, &conv2);
 
-    let loaded = rust_chat::db::load_all(&conn);
+    let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].title, "Pinned");
     assert_eq!(loaded[1].title, "Unpinned");
 }
 
 #[test]
 fn db_skips_streaming_messages() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.add_user_message("test", None);
     conv.push_streaming_assistant(Some("gpt-4.1".to_string()));
     conv.update_streaming_at(1, "partial response...");
     // Message at index 1 is still streaming
 
-    rust_chat::db::save_conversation(&conn, &conv);
-    let loaded = rust_chat::db::load_all(&conn);
+    stoa::db::save_conversation(&conn, &conv);
+    let loaded = stoa::db::load_all(&conn);
     // Streaming message should not be persisted
     assert_eq!(loaded[0].messages.len(), 1);
     assert_eq!(loaded[0].messages[0].role, Role::User);
@@ -599,22 +599,22 @@ fn db_skips_streaming_messages() {
 
 #[test]
 fn db_forked_from_persists() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.forked_from = Some("parent-id-123".to_string());
-    rust_chat::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv);
 
-    let loaded = rust_chat::db::load_all(&conn);
+    let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].forked_from, Some("parent-id-123".to_string()));
 }
 
 #[test]
 fn db_system_prompt_persists() {
-    let conn = rust_chat::db::open_in_memory();
+    let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.system_prompt = "You are a helpful assistant".to_string();
-    rust_chat::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv);
 
-    let loaded = rust_chat::db::load_all(&conn);
+    let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].system_prompt, "You are a helpful assistant");
 }
