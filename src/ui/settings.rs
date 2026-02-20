@@ -144,8 +144,16 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .padding([10, 16])
         .style(tab_style(config.active_provider == Provider::Anthropic));
 
+    let ollama_btn = button(
+        container(text("Ollama").size(13)).width(Length::Fill).align_x(Alignment::Center)
+    )
+        .on_press(Message::SetProvider(Provider::Ollama))
+        .width(Length::Fill)
+        .padding([10, 16])
+        .style(tab_style(config.active_provider == Provider::Ollama));
+
     let provider_toggle = container(
-        row![openai_btn, anthropic_btn].spacing(4)
+        row![openai_btn, anthropic_btn, ollama_btn].spacing(4)
     )
     .padding(4)
     .width(Length::Fill)
@@ -159,9 +167,10 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     });
 
     // Model presets
-    let presets = match config.active_provider {
+    let presets: Vec<&str> = match config.active_provider {
         Provider::OpenAI => vec!["GPT-5", "GPT-4.1", "o3", "o4-mini"],
         Provider::Anthropic => vec!["Opus", "Sonnet", "Haiku"],
+        Provider::Ollama => Vec::new(),
     };
 
     let mut chips = iced::widget::Row::new().spacing(6);
@@ -184,6 +193,33 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .padding(16)
     .width(Length::Fill)
     .style(card_style);
+
+    // Ollama discovered models info
+    let mut ollama_info = iced::widget::Column::new();
+    if config.active_provider == Provider::Ollama {
+        let model_count = app.config.ollama_models.len();
+        let models_text = if model_count > 0 {
+            format!("Discovered {} local model(s): {}", model_count, app.config.ollama_models.join(", "))
+        } else {
+            "No Ollama models found. Is Ollama running?".to_string()
+        };
+        ollama_info = ollama_info.push(
+            container(
+                column![
+                    row![
+                        text("Local Models").size(12).color(TEXT_MUTED),
+                        iced::widget::Space::new().width(Length::Fill),
+                        button(text("\u{21BB} Refresh").size(11))
+                            .on_press(Message::RefreshOllamaModels)
+                            .padding([4, 10])
+                            .style(chip_style(false)),
+                    ].align_y(Alignment::Center),
+                    text(models_text).size(11).color(TEXT_SEC),
+                ].spacing(8)
+            ).padding(16).width(Length::Fill).style(card_style)
+        );
+        ollama_info = ollama_info.push(iced::widget::Space::new().height(12));
+    }
 
     // Connection fields
     let fields_section = container(
@@ -259,6 +295,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let content = column![
         provider_toggle,
         model_section,
+        ollama_info,
         fields_section,
         generation_section,
         system_prompt_section,

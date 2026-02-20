@@ -1,7 +1,10 @@
 mod api;
 mod app;
 mod config;
+mod cost;
 mod db;
+mod diff;
+mod export;
 mod model;
 mod theme;
 mod ui;

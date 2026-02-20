@@ -79,6 +79,18 @@ fn chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style 
     }
 }
 
+fn run_n_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(match status {
+            button::Status::Hovered => Color::from_rgb8(0x2a, 0x7a, 0x5a),
+            _ => Color::from_rgb8(0x1e, 0x5a, 0x42),
+        })),
+        text_color: TEXT_HEAD,
+        border: Border { radius: 18.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
 pub fn short_model_name(model_id: &str) -> &str {
     for (display, id) in AppConfig::available_models() {
         if id == model_id {
@@ -105,12 +117,17 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .size(14)
         .style(input_style);
 
-    let action_btn = if app.is_streaming {
+    let conv_streaming = app.is_active_conv_streaming();
+    let conv_stream_count = app.conv_stream_count(&app.conversations[app.active_conversation].id);
+    let selected_count = app.selected_models.len();
+
+    let action_btn: Element<'_, Message> = if conv_streaming {
+        let label = if conv_stream_count > 1 { "Stop All" } else { "\u{25A0}" };
         button(
-            container(text("\u{25A0}").size(14))
+            container(text(label).size(if conv_stream_count > 1 { 11 } else { 14 }))
                 .align_x(Alignment::Center)
                 .align_y(iced::alignment::Vertical::Center)
-        ).on_press(Message::StopStreaming).width(36).height(36).style(stop_style)
+        ).on_press(Message::StopStreaming).width(if conv_stream_count > 1 { 72 } else { 36 }).height(36).style(stop_style).into()
     } else {
         let can_send = !app.input_value.trim().is_empty();
         if can_send {
@@ -118,13 +135,13 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                 container(text("\u{2191}").size(14))
                     .align_x(Alignment::Center)
                     .align_y(iced::alignment::Vertical::Center)
-            ).on_press(Message::SendMessage).width(36).height(36).style(send_style)
+            ).on_press(Message::SendMessage).width(36).height(36).style(send_style).into()
         } else {
             button(
                 container(text("\u{2191}").size(14))
                     .align_x(Alignment::Center)
                     .align_y(iced::alignment::Vertical::Center)
-            ).width(36).height(36).style(send_disabled_style)
+            ).width(36).height(36).style(send_disabled_style).into()
         }
     };
 
@@ -138,11 +155,24 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .padding([4, 10])
     .style(chip_style(app.model_picker_open));
 
-    let input_row = row![
+    let mut input_row = row![
         model_chip,
         input,
-        action_btn,
     ].spacing(10).align_y(Alignment::Center);
+
+    // "Run N" button when multiple models selected and not streaming
+    if selected_count > 1 && !conv_streaming && !app.input_value.trim().is_empty() {
+        let models: Vec<String> = app.selected_models.iter().cloned().collect();
+        input_row = input_row.push(
+            button(
+                container(text(format!("Run {selected_count}")).size(11))
+                    .align_x(Alignment::Center)
+                    .align_y(iced::alignment::Vertical::Center)
+            ).on_press(Message::SendToModels(models)).width(64).height(36).style(run_n_style)
+        );
+    }
+
+    input_row = input_row.push(action_btn);
 
     let mut content = Column::new();
 
@@ -150,17 +180,46 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     if app.model_picker_open {
         let mut picker_row = iced::widget::Row::new().spacing(6);
         for (display, model_id) in AppConfig::available_models() {
+            let is_selected_multi = app.selected_models.contains(model_id);
             let is_current = model_id == app.selected_model;
             let icon = provider_icon(model_id);
+            let check = if is_selected_multi { "\u{2611}" } else { "\u{2610}" };
+
+            // Left part: checkbox for multi-select
             picker_row = picker_row.push(
-                button(text(format!("{icon} {display}")).size(11))
-                    .on_press(Message::SelectModel(model_id.to_string()))
+                button(text(format!("{check} {icon} {display}")).size(11))
+                    .on_press(Message::ToggleModelSelection(model_id.to_string()))
                     .padding([4, 10])
+                    .style(chip_style(is_current || is_selected_multi))
+            );
+        }
+        // "Run All" chip
+        picker_row = picker_row.push(
+            button(text("Run All").size(11))
+                .on_press(Message::SendToAll)
+                .padding([4, 10])
+                .style(run_n_style)
+        );
+        content = content.push(
+            container(picker_row)
+                .padding(iced::Padding { top: 0.0, right: 28.0, bottom: 8.0, left: 28.0 })
+        );
+
+        // Second row: single-click to set primary model
+        let mut select_row = iced::widget::Row::new().spacing(6);
+        select_row = select_row.push(text("Primary:").size(10).color(TEXT_MUTED));
+        for (display, model_id) in AppConfig::available_models() {
+            let is_current = model_id == app.selected_model;
+            let icon = provider_icon(model_id);
+            select_row = select_row.push(
+                button(text(format!("{icon} {display}")).size(10))
+                    .on_press(Message::SelectModel(model_id.to_string()))
+                    .padding([3, 8])
                     .style(chip_style(is_current))
             );
         }
         content = content.push(
-            container(picker_row)
+            container(select_row)
                 .padding(iced::Padding { top: 0.0, right: 28.0, bottom: 8.0, left: 28.0 })
         );
     }

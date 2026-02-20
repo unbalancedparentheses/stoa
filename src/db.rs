@@ -30,21 +30,18 @@ pub fn open() -> Connection {
     ).expect("failed to create tables");
 
     // Migration: add updated_at if missing (existing DBs)
-    conn.execute(
-        "ALTER TABLE conversations ADD COLUMN updated_at TEXT",
-        [],
-    ).ok();
-    // Backfill NULL updated_at so existing rows sort properly
-    conn.execute(
-        "UPDATE conversations SET updated_at = datetime('now') WHERE updated_at IS NULL",
-        [],
-    ).ok();
+    conn.execute("ALTER TABLE conversations ADD COLUMN updated_at TEXT", []).ok();
+    conn.execute("UPDATE conversations SET updated_at = datetime('now') WHERE updated_at IS NULL", []).ok();
 
     // Migration: add model column to messages
-    conn.execute(
-        "ALTER TABLE messages ADD COLUMN model TEXT",
-        [],
-    ).ok();
+    conn.execute("ALTER TABLE messages ADD COLUMN model TEXT", []).ok();
+
+    // Migration: add tags and pinned to conversations
+    conn.execute("ALTER TABLE conversations ADD COLUMN tags TEXT DEFAULT ''", []).ok();
+    conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0", []).ok();
+
+    // Migration: add token_count to messages
+    conn.execute("ALTER TABLE messages ADD COLUMN token_count INTEGER", []).ok();
 
     migrate_from_json(&conn);
     conn
@@ -52,47 +49,55 @@ pub fn open() -> Connection {
 
 pub fn load_all(conn: &Connection) -> Vec<Conversation> {
     let mut stmt = conn
-        .prepare("SELECT id, title FROM conversations ORDER BY updated_at DESC, rowid DESC")
+        .prepare("SELECT id, title, COALESCE(tags, ''), COALESCE(pinned, 0) FROM conversations ORDER BY pinned DESC, updated_at DESC, rowid DESC")
         .expect("failed to prepare query");
 
-    let conv_rows: Vec<(String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+    let conv_rows: Vec<(String, String, String, i32)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
         .expect("failed to query conversations")
         .filter_map(|r| r.ok())
         .collect();
 
     let mut msg_stmt = conn
-        .prepare("SELECT role, content, model FROM messages WHERE conversation_id = ?1 ORDER BY id")
+        .prepare("SELECT role, content, model, token_count FROM messages WHERE conversation_id = ?1 ORDER BY id")
         .expect("failed to prepare message query");
 
     conv_rows
         .into_iter()
-        .map(|(id, title)| {
+        .map(|(id, title, tags_str, pinned)| {
             let messages: Vec<ChatMessage> = msg_stmt
                 .query_map(params![id], |row| {
                     let role_str: String = row.get(0)?;
                     let content: String = row.get(1)?;
                     let model: Option<String> = row.get(2)?;
+                    let token_count: Option<u32> = row.get(3)?;
                     Ok(ChatMessage {
                         role: if role_str == "user" { Role::User } else { Role::Assistant },
                         content,
                         streaming: false,
                         model,
+                        token_count,
                     })
                 })
                 .expect("failed to query messages")
                 .filter_map(|r| r.ok())
                 .collect();
 
-            Conversation { id, title, messages }
+            let tags = if tags_str.is_empty() {
+                Vec::new()
+            } else {
+                tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            };
+
+            Conversation { id, title, messages, tags, pinned: pinned != 0 }
         })
         .collect()
 }
 
 pub fn save_conversation(conn: &Connection, conv: &Conversation) {
     conn.execute(
-        "INSERT OR REPLACE INTO conversations (id, title, updated_at) VALUES (?1, ?2, datetime('now'))",
-        params![conv.id, conv.title],
+        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32],
     ).ok();
 
     conn.execute(
@@ -101,7 +106,7 @@ pub fn save_conversation(conn: &Connection, conv: &Conversation) {
     ).ok();
 
     let mut stmt = conn
-        .prepare("INSERT INTO messages (conversation_id, role, content, model) VALUES (?1, ?2, ?3, ?4)")
+        .prepare("INSERT INTO messages (conversation_id, role, content, model, token_count) VALUES (?1, ?2, ?3, ?4, ?5)")
         .expect("failed to prepare insert");
 
     for msg in &conv.messages {
@@ -112,7 +117,7 @@ pub fn save_conversation(conn: &Connection, conv: &Conversation) {
             Role::User => "user",
             Role::Assistant => "assistant",
         };
-        stmt.execute(params![conv.id, role_str, msg.content, msg.model]).ok();
+        stmt.execute(params![conv.id, role_str, msg.content, msg.model, msg.token_count]).ok();
     }
 }
 
@@ -125,6 +130,35 @@ pub fn rename_conversation(conn: &Connection, id: &str, title: &str) {
         "UPDATE conversations SET title = ?1 WHERE id = ?2",
         params![title, id],
     ).ok();
+}
+
+pub fn toggle_pin(conn: &Connection, id: &str, pinned: bool) {
+    conn.execute(
+        "UPDATE conversations SET pinned = ?1 WHERE id = ?2",
+        params![pinned as i32, id],
+    ).ok();
+}
+
+pub fn set_tags(conn: &Connection, id: &str, tags: &[String]) {
+    conn.execute(
+        "UPDATE conversations SET tags = ?1 WHERE id = ?2",
+        params![tags.join(","), id],
+    ).ok();
+}
+
+pub fn search_conversations(conn: &Connection, query: &str) -> Vec<String> {
+    let pattern = format!("%{query}%");
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT c.id FROM conversations c
+         LEFT JOIN messages m ON m.conversation_id = c.id
+         WHERE c.title LIKE ?1 OR m.content LIKE ?1
+         ORDER BY c.pinned DESC, c.updated_at DESC"
+    ).expect("search query failed");
+
+    stmt.query_map(params![pattern], |row| row.get(0))
+        .expect("search failed")
+        .filter_map(|r| r.ok())
+        .collect()
 }
 
 fn migrate_from_json(conn: &Connection) {

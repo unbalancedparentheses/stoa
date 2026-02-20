@@ -1,5 +1,5 @@
-use iced::widget::{column, container, row, text};
-use iced::{Element, Length, Theme};
+use iced::widget::{column, container, row, text, Column};
+use iced::{Element, Length, Theme, Border};
 
 use crate::app::{ChatApp, Message};
 use crate::theme::*;
@@ -14,10 +14,20 @@ fn info_row<'a>(icon: &'a str, label: &'a str, value: String) -> Element<'a, Mes
     ].align_y(iced::Alignment::Center).into()
 }
 
+fn stream_card_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(iced::Background::Color(BG_ACTIVE)),
+        border: Border { radius: 6.0.into(), width: 1.0, color: BORDER_DEFAULT },
+        ..Default::default()
+    }
+}
+
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let icon = provider_icon(&app.selected_model);
     let provider_name = if app.selected_model.contains("claude") || app.selected_model.contains("haiku") || app.selected_model.contains("sonnet") || app.selected_model.contains("opus") {
         "Anthropic"
+    } else if app.config.ollama_models.contains(&app.selected_model) {
+        "Ollama"
     } else {
         "OpenAI"
     };
@@ -26,75 +36,111 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let msg_count = conv.messages.len();
     let conv_count = app.conversations.len();
 
-    // Highlights header
     let header = container(column![
         text("Highlights").size(16).color(TEXT_HEAD),
         text("Newest updates").size(11).color(TEXT_MUTED),
     ].spacing(3)).padding(iced::Padding { top: 24.0, right: 20.0, bottom: 16.0, left: 20.0 });
 
-    // System section
-    let system = container(column![
-        text("System").size(11).color(TEXT_MUTED),
-        iced::widget::Space::new().height(8),
-        info_row("\u{25CB}", "Provider", provider_name.to_string()),
-        info_row("\u{25CB}", "Model", format!("{icon} {model}")),
-        info_row("\u{25CB}", "Status", if app.is_streaming { "Streaming".into() } else { "Ready".into() }),
-    ].spacing(6)).padding([12, 20]);
-
-    // Resources section
-    let resources = container(column![
-        text("Resources").size(11).color(TEXT_MUTED),
-        iced::widget::Space::new().height(8),
-        info_row("\u{25CB}", "Conversations", conv_count.to_string()),
-        info_row("\u{25CB}", "Messages", msg_count.to_string()),
-        info_row("\u{25CB}", "Version", "v0.1.0".to_string()),
-    ].spacing(6)).padding([12, 20]);
-
-    // Shortcuts section
-    let shortcuts = container(column![
-        text("Shortcuts").size(12).color(TEXT_HEAD),
-        iced::widget::Space::new().height(8),
-        row![
-            text("Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
-            iced::widget::Space::new().width(Length::Fill),
-            text("Send message").size(10).color(TEXT_SEC),
-        ],
-        row![
-            text("Ctrl+N").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
-            iced::widget::Space::new().width(Length::Fill),
-            text("New chat").size(10).color(TEXT_SEC),
-        ],
-    ].spacing(6)).padding([12, 20]);
-
-    let content = column![
+    let mut content_col = column![
         header,
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
             .style(|_: &Theme| container::Style {
                 background: Some(iced::Background::Color(DIVIDER)),
                 ..Default::default()
             }),
-        system,
-        container(iced::widget::Space::new()).width(Length::Fill).height(1)
-            .style(|_: &Theme| container::Style {
-                background: Some(iced::Background::Color(DIVIDER)),
-                ..Default::default()
-            }),
-        resources,
-        iced::widget::Space::new().height(Length::Fill),
-        container(iced::widget::Space::new()).width(Length::Fill).height(1)
-            .style(|_: &Theme| container::Style {
-                background: Some(iced::Background::Color(DIVIDER)),
-                ..Default::default()
-            }),
-        shortcuts,
-    ].height(Length::Fill);
+    ];
 
-    container(content)
+    // Active streams section
+    if app.is_streaming() {
+        let mut streams_col = Column::new().spacing(8);
+        streams_col = streams_col.push(text("Active Streams").size(11).color(TEXT_MUTED));
+        streams_col = streams_col.push(iced::widget::Space::new().height(4));
+
+        for (_id, stream) in &app.active_streams {
+            let s_icon = provider_icon(&stream.model);
+            let s_name = short_model_name(&stream.model);
+            let elapsed = stream.stream_start.elapsed().as_secs();
+            let chars = stream.current_response.len();
+            let status = if !stream.first_token_received { "connecting...".to_string() } else { format!("{chars} chars, {elapsed}s") };
+            let conv_title: String = app.conv_index_by_id(&stream.conversation_id)
+                .and_then(|ci| app.conversations.get(ci))
+                .map(|c| c.title.chars().take(14).collect())
+                .unwrap_or_else(|| "?".to_string());
+
+            let card = container(column![
+                row![
+                    text(format!("{s_icon} {s_name}")).size(11).color(TEXT_HEAD),
+                    iced::widget::Space::new().width(Length::Fill),
+                    text("\u{25CF}").size(8).color(ACCENT),
+                ].align_y(iced::Alignment::Center),
+                text(status).size(10).color(TEXT_SEC).font(iced::Font::MONOSPACE),
+                text(conv_title).size(9).color(TEXT_MUTED),
+            ].spacing(3)).padding([8, 10]).style(stream_card_style);
+
+            streams_col = streams_col.push(card);
+        }
+
+        content_col = content_col.push(container(streams_col).padding([12, 20]));
+        content_col = content_col.push(
+            container(iced::widget::Space::new()).width(Length::Fill).height(1)
+                .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER)), ..Default::default() })
+        );
+    }
+
+    // System section
+    let is_streaming = app.is_streaming();
+    let status_val = if is_streaming { format!("{} active", app.active_streams.len()) } else { "Ready".into() };
+    let system = container(column![
+        text("System").size(11).color(TEXT_MUTED),
+        iced::widget::Space::new().height(8),
+        info_row("\u{25CB}", "Provider", provider_name.to_string()),
+        info_row("\u{25CB}", "Model", format!("{icon} {model}")),
+        info_row("\u{25CB}", "Status", status_val),
+    ].spacing(6)).padding([12, 20]);
+    content_col = content_col.push(system);
+
+    content_col = content_col.push(
+        container(iced::widget::Space::new()).width(Length::Fill).height(1)
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER)), ..Default::default() })
+    );
+
+    // Resources section with cost
+    let conv_cost = crate::cost::conversation_cost(&conv.messages);
+    let cost_str = if conv_cost > 0.0001 { format!("${:.4}", conv_cost) } else { "Free".to_string() };
+    let resources = container(column![
+        text("Resources").size(11).color(TEXT_MUTED),
+        iced::widget::Space::new().height(8),
+        info_row("\u{25CB}", "Conversations", conv_count.to_string()),
+        info_row("\u{25CB}", "Messages", msg_count.to_string()),
+        info_row("\u{25CB}", "Est. Cost", cost_str),
+        info_row("\u{25CB}", "Ollama", format!("{} models", app.config.ollama_models.len())),
+    ].spacing(6)).padding([12, 20]);
+    content_col = content_col.push(resources);
+
+    content_col = content_col.push(iced::widget::Space::new().height(Length::Fill));
+
+    // Shortcuts section
+    content_col = content_col.push(
+        container(iced::widget::Space::new()).width(Length::Fill).height(1)
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER)), ..Default::default() })
+    );
+    let shortcuts = container(column![
+        text("Shortcuts").size(12).color(TEXT_HEAD),
+        iced::widget::Space::new().height(8),
+        row![text("Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send").size(10).color(TEXT_SEC)],
+        row![text("Ctrl+N").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("New chat").size(10).color(TEXT_SEC)],
+        row![text("Ctrl+K").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Quick switch").size(10).color(TEXT_SEC)],
+        row![text("Ctrl+P").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Commands").size(10).color(TEXT_SEC)],
+        row![text("Ctrl+E").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Export MD").size(10).color(TEXT_SEC)],
+        row![text("C+S+Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send all").size(10).color(TEXT_SEC)],
+    ].spacing(6)).padding([12, 20]);
+    content_col = content_col.push(shortcuts);
+
+    let content_col = content_col.height(Length::Fill);
+
+    container(content_col)
         .width(260)
         .height(Length::Fill)
-        .style(|_: &Theme| container::Style {
-            background: Some(iced::Background::Color(BG)),
-            ..Default::default()
-        })
+        .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(BG)), ..Default::default() })
         .into()
 }

@@ -15,6 +15,8 @@ pub struct ChatMessage {
     pub streaming: bool,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub token_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,12 +24,17 @@ pub struct Conversation {
     pub id: String,
     pub title: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Provider {
     OpenAI,
     Anthropic,
+    Ollama,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +51,8 @@ impl Conversation {
             id: Uuid::new_v4().to_string(),
             title: "New Chat".to_string(),
             messages: Vec::new(),
+            tags: Vec::new(),
+            pinned: false,
         }
     }
 
@@ -53,41 +62,43 @@ impl Conversation {
             content: content.to_string(),
             streaming: false,
             model: target_model,
+            token_count: None,
         });
         if self.title == "New Chat" && !content.trim().is_empty() {
             self.title = content.chars().take(30).collect();
         }
     }
 
-    pub fn update_assistant_streaming(&mut self, content: &str, model: Option<String>) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == Role::Assistant && last.streaming {
-                last.content = content.to_string();
-                return;
-            }
-        }
+    /// Push an empty streaming assistant placeholder. Returns its index.
+    pub fn push_streaming_assistant(&mut self, model: Option<String>) -> usize {
+        let idx = self.messages.len();
         self.messages.push(ChatMessage {
             role: Role::Assistant,
-            content: content.to_string(),
+            content: String::new(),
             streaming: true,
             model,
+            token_count: None,
         });
+        idx
     }
 
-    pub fn finalize_assistant_message(&mut self, content: &str, model: Option<String>) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == Role::Assistant && last.streaming {
-                last.content = content.to_string();
-                last.streaming = false;
-                return;
+    /// Update content at a specific index (must be an assistant streaming message).
+    pub fn update_streaming_at(&mut self, index: usize, content: &str) {
+        if let Some(msg) = self.messages.get_mut(index) {
+            if msg.role == Role::Assistant && msg.streaming {
+                msg.content = content.to_string();
             }
         }
-        self.messages.push(ChatMessage {
-            role: Role::Assistant,
-            content: content.to_string(),
-            streaming: false,
-            model,
-        });
+    }
+
+    /// Finalize the message at a specific index (sets streaming=false).
+    pub fn finalize_at(&mut self, index: usize, content: &str) {
+        if let Some(msg) = self.messages.get_mut(index) {
+            if msg.role == Role::Assistant {
+                msg.content = content.to_string();
+                msg.streaming = false;
+            }
+        }
     }
 }
 
@@ -107,6 +118,15 @@ impl ProviderConfig {
             api_url: "https://api.anthropic.com/v1/messages".to_string(),
             api_key: String::new(),
             model: "claude-sonnet-4-20250514".to_string(),
+        }
+    }
+
+    pub fn default_ollama() -> Self {
+        Self {
+            provider: Provider::Ollama,
+            api_url: "http://localhost:11434/v1/chat/completions".to_string(),
+            api_key: String::new(),
+            model: "llama3.2".to_string(),
         }
     }
 }
