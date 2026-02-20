@@ -1,6 +1,7 @@
 use futures::Stream;
 use reqwest_eventsource::{Event, EventSource};
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::api::LlmEvent;
 use crate::model::{ChatMessage, ProviderConfig, Role};
@@ -24,6 +25,9 @@ fn to_anthropic_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
 pub fn stream(
     config: ProviderConfig,
     messages: Vec<ChatMessage>,
+    system_prompt: Option<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     Box::pin(async_stream::stream! {
         if config.api_key.is_empty() {
@@ -31,13 +35,27 @@ pub fn stream(
             return;
         }
 
-        let client = reqwest::Client::new();
-        let body = serde_json::json!({
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+
+        let mut body = serde_json::json!({
             "model": config.model,
             "messages": to_anthropic_messages(&messages),
-            "max_tokens": 4096,
+            "max_tokens": max_tokens.unwrap_or(4096),
             "stream": true,
         });
+
+        if let Some(t) = temperature {
+            body["temperature"] = serde_json::json!(t);
+        }
+
+        if let Some(ref prompt) = system_prompt {
+            if !prompt.is_empty() {
+                body["system"] = serde_json::Value::String(prompt.clone());
+            }
+        }
 
         let request = client
             .post(&config.api_url)
@@ -46,7 +64,13 @@ pub fn stream(
             .header("Content-Type", "application/json")
             .body(body.to_string());
 
-        let mut es = EventSource::new(request).expect("failed to create event source");
+        let mut es = match EventSource::new(request) {
+            Ok(es) => es,
+            Err(e) => {
+                yield LlmEvent::Error(format!("Failed to connect: {e}"));
+                return;
+            }
+        };
 
         use futures::StreamExt;
         while let Some(event) = es.next().await {

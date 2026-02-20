@@ -11,7 +11,10 @@ pub enum Role {
 pub struct ChatMessage {
     pub role: Role,
     pub content: String,
+    #[serde(default)]
     pub streaming: bool,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,18 +47,19 @@ impl Conversation {
         }
     }
 
-    pub fn add_user_message(&mut self, content: &str) {
+    pub fn add_user_message(&mut self, content: &str, target_model: Option<String>) {
         self.messages.push(ChatMessage {
             role: Role::User,
             content: content.to_string(),
             streaming: false,
+            model: target_model,
         });
         if self.title == "New Chat" && !content.trim().is_empty() {
             self.title = content.chars().take(30).collect();
         }
     }
 
-    pub fn update_assistant_streaming(&mut self, content: &str) {
+    pub fn update_assistant_streaming(&mut self, content: &str, model: Option<String>) {
         if let Some(last) = self.messages.last_mut() {
             if last.role == Role::Assistant && last.streaming {
                 last.content = content.to_string();
@@ -66,10 +70,11 @@ impl Conversation {
             role: Role::Assistant,
             content: content.to_string(),
             streaming: true,
+            model,
         });
     }
 
-    pub fn finalize_assistant_message(&mut self, content: &str) {
+    pub fn finalize_assistant_message(&mut self, content: &str, model: Option<String>) {
         if let Some(last) = self.messages.last_mut() {
             if last.role == Role::Assistant && last.streaming {
                 last.content = content.to_string();
@@ -81,46 +86,8 @@ impl Conversation {
             role: Role::Assistant,
             content: content.to_string(),
             streaming: false,
+            model,
         });
-    }
-
-    fn data_dir() -> std::path::PathBuf {
-        let dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("rust-chat")
-            .join("conversations");
-        std::fs::create_dir_all(&dir).ok();
-        dir
-    }
-
-    pub fn save(&self) {
-        let path = Self::data_dir().join(format!("{}.json", self.id));
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            std::fs::write(path, json).ok();
-        }
-    }
-
-    pub fn delete(&self) {
-        let path = Self::data_dir().join(format!("{}.json", self.id));
-        std::fs::remove_file(path).ok();
-    }
-
-
-    pub fn load_all() -> Vec<Self> {
-        let dir = Self::data_dir();
-        let mut convos = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().is_some_and(|e| e == "json") {
-                    if let Ok(data) = std::fs::read_to_string(entry.path()) {
-                        if let Ok(conv) = serde_json::from_str::<Conversation>(&data) {
-                            convos.push(conv);
-                        }
-                    }
-                }
-            }
-        }
-        convos
     }
 }
 

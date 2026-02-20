@@ -1,7 +1,9 @@
 mod api;
 mod app;
 mod config;
+mod db;
 mod model;
+mod theme;
 mod ui;
 
 use app::ChatApp;

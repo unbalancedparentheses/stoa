@@ -16,9 +16,12 @@ pub enum LlmEvent {
 pub fn stream_completion(
     config: ProviderConfig,
     messages: Vec<ChatMessage>,
+    system_prompt: Option<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     match config.provider {
-        Provider::OpenAI => openai::stream(config, messages),
-        Provider::Anthropic => anthropic::stream(config, messages),
+        Provider::OpenAI => openai::stream(config, messages, system_prompt, temperature, max_tokens),
+        Provider::Anthropic => anthropic::stream(config, messages, system_prompt, temperature, max_tokens),
     }
 }
