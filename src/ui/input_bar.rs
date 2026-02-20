@@ -155,59 +155,42 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .padding([4, 10])
     .style(chip_style(app.model_picker_open));
 
-    // Attach file button
-    let attach_btn = button(
-        container(text("+").size(14))
-            .align_x(Alignment::Center)
-            .align_y(iced::alignment::Vertical::Center)
-    ).on_press(Message::AttachFile).width(36).height(36).style(|_: &Theme, status: button::Status| {
-        button::Style {
-            background: Some(iced::Background::Color(match status {
-                button::Status::Hovered => BG_HOVER,
-                _ => BG_ACTIVE,
-            })),
-            text_color: TEXT_SEC,
-            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
-            ..Default::default()
-        }
-    });
+    // Toolbar: compact attach/image/search buttons
+    let toolbar_btn = |label: &'static str, msg: Message| -> Element<'_, Message> {
+        button(text(label).size(11))
+            .on_press(msg)
+            .padding([4, 8])
+            .style(|_: &Theme, status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                text_color: match status { button::Status::Hovered => TEXT_HEAD, _ => TEXT_MUTED },
+                ..Default::default()
+            })
+            .into()
+    };
 
-    // Image attach button
-    let img_btn = button(
-        container(text("\u{1F5BC}").size(12))
-            .align_x(Alignment::Center)
-            .align_y(iced::alignment::Vertical::Center)
-    ).on_press(Message::AttachImage).width(36).height(36).style(|_: &Theme, status: button::Status| {
-        button::Style {
-            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
-            text_color: TEXT_SEC,
-            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
+    let search_color = if app.web_search_context.is_some() || app.web_search_pending { ACCENT } else { TEXT_MUTED };
+    let search_icon = if app.web_search_pending { "\u{2026}" } else { "\u{2315}" };
+    let search_btn: Element<'_, Message> = button(text(search_icon).size(11).color(search_color))
+        .on_press(Message::WebSearch)
+        .padding([4, 8])
+        .style(|_: &Theme, status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            text_color: match status { button::Status::Hovered => TEXT_HEAD, _ => TEXT_MUTED },
             ..Default::default()
-        }
-    });
+        })
+        .into();
 
-    // Web search button
-    let search_label = if app.web_search_pending { "\u{2026}" } else { "\u{1F50D}" };
-    let search_btn = button(
-        container(text(search_label).size(12))
-            .align_x(Alignment::Center)
-            .align_y(iced::alignment::Vertical::Center)
-    ).on_press(Message::WebSearch).width(36).height(36).style(|_: &Theme, status: button::Status| {
-        button::Style {
-            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
-            text_color: if app.web_search_context.is_some() { ACCENT } else { TEXT_SEC },
-            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
-            ..Default::default()
-        }
-    });
+    let toolbar = row![
+        toolbar_btn("+", Message::AttachFile),
+        toolbar_btn("\u{25A3}", Message::AttachImage),
+        search_btn,
+    ].spacing(2).align_y(Alignment::Center);
 
     let mut input_row = row![
         model_chip,
-        attach_btn,
-        img_btn,
-        search_btn,
+        toolbar,
         input,
-    ].spacing(6).align_y(Alignment::Center);
+    ].spacing(8).align_y(Alignment::Center);
 
     // "Run N" button when multiple models selected and not streaming
     if selected_count > 1 && !conv_streaming && !app.input_value.trim().is_empty() {

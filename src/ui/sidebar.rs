@@ -149,7 +149,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     ].spacing(2)).padding([0, 10]);
 
     // Search
-    let search_input = text_input("\u{1F50D} Search...", &app.sidebar_search_query)
+    let search_input = text_input("Search...", &app.sidebar_search_query)
         .on_input(Message::SidebarSearchChanged)
         .size(11)
         .padding([5, 10])
@@ -245,43 +245,36 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                 .style(conv_style(is_active)),
         );
 
-        // Show tags for active conversation
-        if is_active && !conv.tags.is_empty() {
-            let mut tag_row = iced::widget::Row::new().spacing(4);
-            for tag in &conv.tags {
+        // Tags + tag input for active conversation
+        if is_active {
+            if app.tag_input_open {
+                let tag_input = text_input("tag name...", &app.tag_input_value)
+                    .on_input(Message::TagInputChanged)
+                    .on_submit(Message::SubmitTag)
+                    .size(10)
+                    .padding([3, 8])
+                    .style(rename_input_style);
+                conv_list = conv_list.push(
+                    container(tag_input).padding(iced::Padding { top: 0.0, right: 10.0, bottom: 2.0, left: 20.0 })
+                );
+            } else {
+                let mut tag_row = iced::widget::Row::new().spacing(4);
+                for tag in &conv.tags {
+                    tag_row = tag_row.push(
+                        button(text(format!("#{tag}")).size(8)).padding([1, 5])
+                            .on_press(Message::RemoveTag(tag.clone()))
+                            .style(analyze_chip_style)
+                    );
+                }
                 tag_row = tag_row.push(
-                    button(text(format!("#{tag}")).size(9))
-                        .on_press(Message::RemoveTag(tag.clone()))
-                        .padding([2, 6])
-                        .style(analyze_chip_style)
+                    button(text("+").size(8)).padding([1, 5])
+                        .on_press(Message::ToggleTagInput)
+                        .style(analyze_style)
+                );
+                conv_list = conv_list.push(
+                    container(tag_row).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 2.0, left: 20.0 })
                 );
             }
-            conv_list = conv_list.push(
-                container(tag_row).padding(iced::Padding { top: 2.0, right: 0.0, bottom: 4.0, left: 12.0 })
-            );
-        }
-
-        // Tag input for active conversation
-        if is_active && app.tag_input_open {
-            let tag_input = text_input("Add tag...", &app.tag_input_value)
-                .on_input(Message::TagInputChanged)
-                .on_submit(Message::SubmitTag)
-                .size(10)
-                .padding([4, 8])
-                .style(rename_input_style);
-            conv_list = conv_list.push(
-                container(tag_input).padding(iced::Padding { top: 2.0, right: 0.0, bottom: 4.0, left: 12.0 })
-            );
-        }
-
-        // + tag button for active conversation
-        if is_active && !app.tag_input_open {
-            conv_list = conv_list.push(
-                container(
-                    button(text("+ tag").size(9)).padding([2, 6]).style(analyze_style)
-                        .on_press(Message::ToggleTagInput)
-                ).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 2.0, left: 12.0 })
-            );
         }
     }
 
