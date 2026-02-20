@@ -155,8 +155,26 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .padding([4, 10])
     .style(chip_style(app.model_picker_open));
 
+    // Attach file button
+    let attach_btn = button(
+        container(text("+").size(14))
+            .align_x(Alignment::Center)
+            .align_y(iced::alignment::Vertical::Center)
+    ).on_press(Message::AttachFile).width(36).height(36).style(|_: &Theme, status: button::Status| {
+        button::Style {
+            background: Some(iced::Background::Color(match status {
+                button::Status::Hovered => BG_HOVER,
+                _ => BG_ACTIVE,
+            })),
+            text_color: TEXT_SEC,
+            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
+            ..Default::default()
+        }
+    });
+
     let mut input_row = row![
         model_chip,
+        attach_btn,
         input,
     ].spacing(10).align_y(Alignment::Center);
 
@@ -175,6 +193,19 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     input_row = input_row.push(action_btn);
 
     let mut content = Column::new();
+
+    // Show attached file indicator
+    if let Some(ref filename) = app.attached_filename {
+        content = content.push(
+            container(
+                row![
+                    text(format!("\u{1F4CE} {filename}")).size(11).color(ACCENT),
+                    iced::widget::Space::new().width(8),
+                    text(format!("({} chars)", app.attached_file.as_ref().map(|f| f.len()).unwrap_or(0))).size(10).color(TEXT_MUTED),
+                ].align_y(Alignment::Center)
+            ).padding(iced::Padding { top: 0.0, right: 28.0, bottom: 4.0, left: 28.0 })
+        );
+    }
 
     // Model picker dropdown (above input row)
     if app.model_picker_open {
