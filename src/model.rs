@@ -17,6 +17,12 @@ pub struct ChatMessage {
     pub model: Option<String>,
     #[serde(default)]
     pub token_count: Option<u32>,
+    /// -1 = thumbs down, 0 = no rating, 1 = thumbs up
+    #[serde(default)]
+    pub rating: i8,
+    /// Time to first token in milliseconds
+    #[serde(default)]
+    pub latency_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +34,10 @@ pub struct Conversation {
     pub tags: Vec<String>,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -53,6 +63,26 @@ impl Conversation {
             messages: Vec::new(),
             tags: Vec::new(),
             pinned: false,
+            system_prompt: String::new(),
+            forked_from: None,
+        }
+    }
+
+    /// Fork this conversation up to (and including) message at `up_to_index`.
+    pub fn fork(&self, up_to_index: usize) -> Self {
+        let messages: Vec<ChatMessage> = self.messages.iter()
+            .take(up_to_index + 1)
+            .filter(|m| !m.streaming)
+            .cloned()
+            .collect();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            title: format!("Fork of {}", self.title),
+            messages,
+            tags: self.tags.clone(),
+            pinned: false,
+            system_prompt: self.system_prompt.clone(),
+            forked_from: Some(self.id.clone()),
         }
     }
 
@@ -63,13 +93,14 @@ impl Conversation {
             streaming: false,
             model: target_model,
             token_count: None,
+            rating: 0,
+            latency_ms: None,
         });
         if self.title == "New Chat" && !content.trim().is_empty() {
             self.title = content.chars().take(30).collect();
         }
     }
 
-    /// Push an empty streaming assistant placeholder. Returns its index.
     pub fn push_streaming_assistant(&mut self, model: Option<String>) -> usize {
         let idx = self.messages.len();
         self.messages.push(ChatMessage {
@@ -78,11 +109,12 @@ impl Conversation {
             streaming: true,
             model,
             token_count: None,
+            rating: 0,
+            latency_ms: None,
         });
         idx
     }
 
-    /// Update content at a specific index (must be an assistant streaming message).
     pub fn update_streaming_at(&mut self, index: usize, content: &str) {
         if let Some(msg) = self.messages.get_mut(index) {
             if msg.role == Role::Assistant && msg.streaming {
@@ -91,7 +123,6 @@ impl Conversation {
         }
     }
 
-    /// Finalize the message at a specific index (sets streaming=false).
     pub fn finalize_at(&mut self, index: usize, content: &str) {
         if let Some(msg) = self.messages.get_mut(index) {
             if msg.role == Role::Assistant {

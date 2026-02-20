@@ -141,7 +141,8 @@ fn render_assistant_message<'a>(
         if msg.content.is_empty() {
             col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
         } else {
-            col = col.push(text(msg.content.clone()).size(if compact { 13 } else { 14 }).line_height(1.7).color(TEXT_BODY));
+            // Streaming markdown rendering
+            col = col.push(markdown::render_markdown(&msg.content));
             col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
         }
         if let Some((&stream_id, _)) = app.active_streams.iter().find(|(_, s)| s.message_index == i) {
@@ -152,8 +153,19 @@ fn render_assistant_message<'a>(
     }
 
     if !msg.streaming {
+        // Thumbs up/down + action buttons
+        let up_color = if msg.rating > 0 { SUCCESS } else { TEXT_MUTED };
+        let down_color = if msg.rating < 0 { DANGER } else { TEXT_MUTED };
+
         let mut actions = row![
-            button(text("\u{2398}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::CopyToClipboard(msg.content.clone())),
+            button(text("\u{25B2}").size(11).color(up_color)).padding([2, 5])
+                .style(action_btn_style).on_press(Message::RateMessage(i, 1)),
+            button(text("\u{25BC}").size(11).color(down_color)).padding([2, 5])
+                .style(action_btn_style).on_press(Message::RateMessage(i, -1)),
+            button(text("\u{2398}").size(12)).padding([2, 6]).style(action_btn_style)
+                .on_press(Message::CopyToClipboard(msg.content.clone())),
+            button(text("\u{2442}").size(12)).padding([2, 6]).style(action_btn_style)
+                .on_press(Message::ForkConversation(i)),
         ].spacing(4);
 
         if last_assistant_idx == Some(i) && !is_streaming {
@@ -165,15 +177,21 @@ fn render_assistant_message<'a>(
         actions = actions.push(button(text("\u{00D7}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::DeleteMessage(i)));
         col = col.push(actions);
 
-        // Cost estimate
+        // Cost + latency info line
+        let mut info_parts = Vec::new();
         if let Some(model_id) = &msg.model {
             let tokens = msg.token_count.unwrap_or_else(|| crate::cost::estimate_tokens(&msg.content));
             let cost = crate::cost::message_cost(model_id, &msg.role, tokens);
             if cost > 0.0 {
-                col = col.push(text(format!("~${:.4} ({} tok)", cost, tokens)).size(9).color(TEXT_MUTED));
-            } else if tokens > 0 {
-                col = col.push(text(format!("{} tok", tokens)).size(9).color(TEXT_MUTED));
+                info_parts.push(format!("~${:.4}", cost));
             }
+            info_parts.push(format!("{} tok", tokens));
+        }
+        if let Some(lat) = msg.latency_ms {
+            info_parts.push(format!("{lat} ms"));
+        }
+        if !info_parts.is_empty() {
+            col = col.push(text(info_parts.join(" \u{00B7} ")).size(9).color(TEXT_MUTED));
         }
 
         // Review picker (only in non-compact mode)
@@ -266,10 +284,22 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
             ..Default::default()
         });
 
+    let has_sys_prompt = !conv.system_prompt.is_empty();
+    let sys_prompt_btn = button(
+        text(if has_sys_prompt { "Sys \u{2713}" } else { "Sys" }).size(11)
+    ).on_press(Message::ToggleConvSystemPrompt).padding([4, 10]).style(move |_: &Theme, status: button::Status| button::Style {
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
+        text_color: if has_sys_prompt { SUCCESS } else { TEXT_SEC },
+        border: Border { radius: 10.0.into(), width: 1.0, color: if has_sys_prompt { Color::from_rgb8(0x24, 0x50, 0x3a) } else { BORDER_DEFAULT } },
+        ..Default::default()
+    });
+
     let chat_header = container(
         row![
             text("Home").size(15).color(TEXT_HEAD),
             iced::widget::Space::new().width(Length::Fill),
+            sys_prompt_btn,
+            iced::widget::Space::new().width(8),
             compare_btn,
         ].align_y(Alignment::Center)
     ).width(Length::Fill).padding([14, 28]).style(|_: &Theme| container::Style {
@@ -278,6 +308,35 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     });
 
     let mut messages_col = Column::new().spacing(20).padding([24, 36]);
+
+    // System prompt editor
+    if app.conv_system_prompt_open {
+        let sys_input = iced::widget::text_input("System prompt for this conversation...", &app.conv_system_prompt_value)
+            .on_input(Message::ConvSystemPromptChanged)
+            .on_submit(Message::SaveConvSystemPrompt)
+            .size(13).padding([10, 14])
+            .style(|_: &Theme, status: iced::widget::text_input::Status| iced::widget::text_input::Style {
+                background: iced::Background::Color(INPUT_BG),
+                border: Border { radius: 8.0.into(), width: 1.0, color: match status {
+                    iced::widget::text_input::Status::Focused { .. } => ACCENT,
+                    _ => BORDER_DEFAULT,
+                }},
+                icon: TEXT_MUTED, placeholder: TEXT_MUTED, value: TEXT_HEAD, selection: SELECTION,
+            });
+        let save_btn = button(text("Save").size(11)).padding([6, 14]).on_press(Message::SaveConvSystemPrompt)
+            .style(|_: &Theme, status: button::Status| button::Style {
+                background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT, _ => ACCENT_DIM })),
+                text_color: TEXT_HEAD,
+                border: Border { radius: 8.0.into(), ..Default::default() },
+                ..Default::default()
+            });
+        messages_col = messages_col.push(
+            container(column![
+                text("System Prompt (this conversation)").size(11).color(TEXT_MUTED),
+                row![sys_input, iced::widget::Space::new().width(8), save_btn].align_y(Alignment::Center),
+            ].spacing(6)).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 8.0, left: 0.0 })
+        );
+    }
 
     if conv.messages.is_empty() && !is_streaming {
         let model = short_model_name(&app.selected_model);

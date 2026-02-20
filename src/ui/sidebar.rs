@@ -111,6 +111,7 @@ fn rename_input_style(_: &Theme, status: text_input::Status) -> text_input::Styl
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let chat_active = matches!(app.view, View::Chat);
     let settings_active = matches!(app.view, View::Settings);
+    let analytics_active = matches!(app.view, View::Analytics);
 
     // Workspace header
     let header = container(
@@ -137,6 +138,10 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
             .on_press(Message::NewConversation)
             .width(Length::Fill).padding([8, 12])
             .style(nav_style(false)),
+        button(text("\u{2261}  Analytics").size(13))
+            .on_press(Message::ShowAnalytics)
+            .width(Length::Fill).padding([8, 12])
+            .style(nav_style(analytics_active)),
         button(text("\u{2699}  Settings").size(13))
             .on_press(Message::ShowSettings)
             .width(Length::Fill).padding([8, 12])

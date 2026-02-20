@@ -20,6 +20,7 @@ fn all_commands() -> Vec<Command> {
         Command { label: "Toggle Comparison", description: "Switch comparison mode on/off", shortcut: "", message: Message::ToggleComparisonMode },
         Command { label: "Export Markdown", description: "Copy conversation as Markdown", shortcut: "Ctrl+E", message: Message::ExportMarkdown },
         Command { label: "Refresh Ollama", description: "Re-scan local Ollama models", shortcut: "", message: Message::RefreshOllamaModels },
+        Command { label: "Analytics", description: "View model stats and ratings", shortcut: "", message: Message::ShowAnalytics },
         Command { label: "Quick Switcher", description: "Search conversations", shortcut: "Ctrl+K", message: Message::ToggleQuickSwitcher },
     ]
 }

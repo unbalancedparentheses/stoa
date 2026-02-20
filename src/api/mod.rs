@@ -8,9 +8,16 @@ use std::pin::Pin;
 use crate::model::{ChatMessage, Provider, ProviderConfig};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum LlmEvent {
     Token(String),
-    Done,
+    Done(Option<TokenUsage>),
     Error(String),
 }
 

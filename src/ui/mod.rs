@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod bottom_bar;
 pub mod chat_view;
 pub mod command_palette;
