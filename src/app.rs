@@ -10,6 +10,73 @@ use crate::ui;
 
 pub type StreamId = usize;
 
+/// Generate a short conversation title using the LLM.
+async fn generate_title(config: crate::model::ProviderConfig, user_msg: String, assistant_msg: String) -> String {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+
+    let prompt = format!(
+        "Generate a very short title (3-6 words, no quotes) for a conversation that starts with:\nUser: {}\nAssistant: {}",
+        user_msg.chars().take(200).collect::<String>(),
+        assistant_msg.chars().take(200).collect::<String>(),
+    );
+
+    let body = match config.provider {
+        crate::model::Provider::Anthropic => {
+            serde_json::json!({
+                "model": config.model,
+                "max_tokens": 30,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+        }
+        _ => {
+            serde_json::json!({
+                "model": config.model,
+                "max_tokens": 30,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+        }
+    };
+
+    let mut req = client.post(&config.api_url)
+        .header("Content-Type", "application/json");
+
+    match config.provider {
+        crate::model::Provider::Anthropic => {
+            req = req.header("x-api-key", &config.api_key)
+                .header("anthropic-version", "2023-06-01");
+        }
+        crate::model::Provider::Ollama => {}
+        _ => {
+            req = req.header("Authorization", format!("Bearer {}", config.api_key));
+        }
+    }
+
+    let resp = match req.body(body.to_string()).send().await {
+        Ok(r) => r,
+        Err(_) => return String::new(),
+    };
+
+    let json: serde_json::Value = match resp.json().await {
+        Ok(j) => j,
+        Err(_) => return String::new(),
+    };
+
+    // Extract title from response
+    let title = match config.provider {
+        crate::model::Provider::Anthropic => {
+            json["content"][0]["text"].as_str().unwrap_or("").to_string()
+        }
+        _ => {
+            json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
+        }
+    };
+
+    title.trim().trim_matches('"').chars().take(50).collect()
+}
+
 #[derive(Debug, Clone)]
 pub enum View {
     Chat,
@@ -70,6 +137,9 @@ pub struct ChatApp {
     // System prompt editing
     pub conv_system_prompt_open: bool,
     pub conv_system_prompt_value: String,
+    // File attachment
+    pub attached_file: Option<String>,
+    pub attached_filename: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +228,11 @@ pub enum Message {
     // Ollama
     OllamaModelsDiscovered(Vec<String>),
     RefreshOllamaModels,
+    // Auto-title
+    AutoTitleResult(String, String), // (conversation_id, generated_title)
+    // File attach
+    AttachFile,
+    FileAttached(String), // file contents
     // Misc
     DismissError,
 }
@@ -221,6 +296,8 @@ impl ChatApp {
                 session_cost: 0.0,
                 conv_system_prompt_open: false,
                 conv_system_prompt_value: String::new(),
+                attached_file: None,
+                attached_filename: None,
             },
             discover_task,
         )
@@ -313,15 +390,19 @@ impl ChatApp {
             Message::InputChanged(value) => { self.input_value = value; Task::none() }
             Message::SendMessage => {
                 if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
-                let text = self.input_value.clone();
+                let mut text = self.input_value.clone();
                 self.input_value.clear();
                 self.error_message = None;
                 self.model_picker_open = false;
                 self.last_latency_ms = None;
+                // Prepend attached file content if present
+                if let Some(content) = self.attached_file.take() {
+                    let filename = self.attached_filename.take().unwrap_or_default();
+                    text = format!("[Attached file: {filename}]\n```\n{content}\n```\n\n{text}");
+                }
                 let model_id = self.selected_model.clone();
                 let conv = &mut self.conversations[self.active_conversation];
                 conv.add_user_message(&text, Some(model_id.clone()));
-                // Set token count on user message
                 if let Some(msg) = conv.messages.last_mut() {
                     msg.token_count = Some(crate::cost::estimate_tokens(&text));
                 }
@@ -396,7 +477,24 @@ impl ChatApp {
                             let cost = crate::cost::message_cost(msg.model.as_deref().unwrap_or(""), &msg.role, tokens);
                             self.session_cost += cost;
                         }
+                        // Auto-title: if this is the first assistant message and title looks auto-generated
+                        let should_auto_title = conv.messages.iter().filter(|m| m.role == Role::Assistant && !m.streaming).count() == 1
+                            && conv.title.len() <= 30
+                            && conv.forked_from.is_none();
+
                         crate::db::save_conversation(&self.db, conv);
+
+                        if should_auto_title {
+                            let conv_id = conv.id.clone();
+                            let user_msg = conv.messages.iter().find(|m| m.role == Role::User).map(|m| m.content.clone()).unwrap_or_default();
+                            let assistant_msg = stream.current_response.clone();
+                            let model = stream.model.clone();
+                            let provider_config = self.config.provider_config_for_model(&model);
+                            return Task::perform(
+                                generate_title(provider_config, user_msg, assistant_msg),
+                                move |title| Message::AutoTitleResult(conv_id.clone(), title),
+                            );
+                        }
                     }
                 }
                 Task::none()
@@ -744,6 +842,50 @@ impl ChatApp {
                         Err(_) => Message::OllamaModelsDiscovered(Vec::new()),
                     },
                 )
+            }
+            // Auto-title
+            Message::AutoTitleResult(conv_id, title) => {
+                if !title.is_empty() {
+                    if let Some(ci) = self.conv_index_by_id(&conv_id) {
+                        self.conversations[ci].title = title.clone();
+                        crate::db::rename_conversation(&self.db, &conv_id, &title);
+                    }
+                }
+                Task::none()
+            }
+            // File attach
+            Message::AttachFile => {
+                Task::perform(
+                    async {
+                        let handle = rfd::AsyncFileDialog::new()
+                            .add_filter("Text files", &["txt", "md", "rs", "py", "js", "ts", "go", "c", "cpp", "h", "json", "toml", "yaml", "yml", "csv", "xml", "html", "css", "sh", "sql"])
+                            .add_filter("All files", &["*"])
+                            .pick_file()
+                            .await;
+                        match handle {
+                            Some(file) => {
+                                let name = file.file_name();
+                                let data = file.read().await;
+                                let content = String::from_utf8_lossy(&data).to_string();
+                                Some((name, content))
+                            }
+                            None => None,
+                        }
+                    },
+                    |result| match result {
+                        Some((name, content)) => Message::FileAttached(format!("{}\n{}", name, content)),
+                        None => Message::DismissError, // no-op
+                    },
+                )
+            }
+            Message::FileAttached(data) => {
+                // Format: "filename\ncontent"
+                if let Some(idx) = data.find('\n') {
+                    let (name, content) = data.split_at(idx);
+                    self.attached_filename = Some(name.to_string());
+                    self.attached_file = Some(content[1..].to_string());
+                }
+                Task::none()
             }
             Message::DismissError => { self.error_message = None; Task::none() }
         }
