@@ -1,11 +1,14 @@
 use iced::widget::{column, container, row};
 use iced::{keyboard, Element, Length, Subscription, Task, Theme, Color};
 use rusqlite::Connection;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::config::AppConfig;
 use crate::model::{Conversation, Provider, Role};
 use crate::ui;
+
+pub type StreamId = usize;
 
 #[derive(Debug, Clone)]
 pub enum View {
@@ -13,12 +16,20 @@ pub enum View {
     Settings,
 }
 
+pub struct ActiveStream {
+    pub model: String,
+    pub current_response: String,
+    pub message_index: usize,
+    pub conversation_id: String,
+    pub abort_handle: iced::task::Handle,
+    pub stream_start: Instant,
+    pub first_token_received: bool,
+}
+
 pub struct ChatApp {
     pub conversations: Vec<Conversation>,
     pub active_conversation: usize,
     pub input_value: String,
-    pub is_streaming: bool,
-    pub current_response: String,
     pub config: AppConfig,
     pub view: View,
     pub error_message: Option<String>,
@@ -27,18 +38,34 @@ pub struct ChatApp {
     pub renaming_conversation: Option<usize>,
     pub rename_value: String,
     // Latency
-    pub stream_start: Option<Instant>,
     pub last_latency_ms: Option<u128>,
-    // Abort streaming
-    abort_handle: Option<iced::task::Handle>,
     // Database
     db: Connection,
     // Multi-model
     pub selected_model: String,
-    pub streaming_model: Option<String>,
     pub model_picker_open: bool,
     pub review_picker: Option<usize>,
     pub analyze_source_conversation: Option<usize>,
+    // Multi-stream
+    pub next_stream_id: StreamId,
+    pub active_streams: HashMap<StreamId, ActiveStream>,
+    pub selected_models: HashSet<String>,
+    // Comparison + Diff
+    pub comparison_mode: bool,
+    pub diff_active: Option<(usize, usize)>,
+    // Quick switcher + Command palette
+    pub quick_switcher_open: bool,
+    pub quick_switcher_query: String,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
+    // Sidebar search
+    pub sidebar_search_query: String,
+    pub sidebar_search_results: Option<Vec<String>>,
+    // Tag input
+    pub tag_input_open: bool,
+    pub tag_input_value: String,
+    // Cost
+    pub session_cost: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -47,10 +74,15 @@ pub enum Message {
     InputChanged(String),
     SendMessage,
     // Streaming
-    StreamToken(String),
-    StreamComplete,
-    StreamError(String),
+    StreamToken(StreamId, String),
+    StreamComplete(StreamId),
+    StreamError(StreamId, String),
     StopStreaming,
+    StopStream(StreamId),
+    // Multi-model send
+    SendToModels(Vec<String>),
+    SendToAll,
+    ToggleModelSelection(String),
     // Navigation
     SelectConversation(usize),
     NewConversation,
@@ -86,6 +118,32 @@ pub enum Message {
     AnalyzeConversation(usize),
     AnalyzeWith(String),
     DismissAnalyzePicker,
+    // Tags + Pins
+    TogglePin(usize),
+    AddTag(String),
+    RemoveTag(String),
+    ToggleTagInput,
+    TagInputChanged(String),
+    SubmitTag,
+    // Comparison + Diff
+    ToggleComparisonMode,
+    ShowDiff(usize, usize),
+    DismissDiff,
+    // Quick switcher
+    ToggleQuickSwitcher,
+    QuickSwitcherQueryChanged(String),
+    QuickSwitcherSelect(usize),
+    // Command palette
+    ToggleCommandPalette,
+    CommandPaletteQueryChanged(String),
+    // Sidebar search
+    SidebarSearchChanged(String),
+    ClearSidebarSearch,
+    // Export
+    ExportMarkdown,
+    // Ollama
+    OllamaModelsDiscovered(Vec<String>),
+    RefreshOllamaModels,
     // Misc
     DismissError,
 }
@@ -103,32 +161,74 @@ impl ChatApp {
             conversations
         };
 
-        let selected_model = config.active_provider_config().model.clone();
+        let selected_model = config.selected_model.clone()
+            .unwrap_or_else(|| config.active_provider_config().model.clone());
+
+        // Discover Ollama models on startup
+        let ollama_url = config.ollama.api_url.clone();
+        let discover_task = Task::perform(
+            async move { crate::api::ollama::discover_models(&ollama_url).await },
+            |result| match result {
+                Ok(models) => Message::OllamaModelsDiscovered(models),
+                Err(_) => Message::OllamaModelsDiscovered(Vec::new()), // silently fail
+            },
+        );
+
         (
             Self {
                 conversations,
                 active_conversation: 0,
                 input_value: String::new(),
-                is_streaming: false,
-                current_response: String::new(),
                 config,
                 view: View::Chat,
                 error_message: None,
                 config_saved: false,
                 renaming_conversation: None,
                 rename_value: String::new(),
-                stream_start: None,
                 last_latency_ms: None,
-                abort_handle: None,
                 db,
                 selected_model,
-                streaming_model: None,
                 model_picker_open: false,
                 review_picker: None,
                 analyze_source_conversation: None,
+                next_stream_id: 0,
+                active_streams: HashMap::new(),
+                selected_models: HashSet::new(),
+                comparison_mode: false,
+                diff_active: None,
+                quick_switcher_open: false,
+                quick_switcher_query: String::new(),
+                command_palette_open: false,
+                command_palette_query: String::new(),
+                sidebar_search_query: String::new(),
+                sidebar_search_results: None,
+                tag_input_open: false,
+                tag_input_value: String::new(),
+                session_cost: 0.0,
             },
-            Task::none(),
+            discover_task,
         )
+    }
+
+    pub fn is_streaming(&self) -> bool {
+        !self.active_streams.is_empty()
+    }
+
+    pub fn is_active_conv_streaming(&self) -> bool {
+        let conv_id = &self.conversations[self.active_conversation].id;
+        self.active_streams.values().any(|s| s.conversation_id == *conv_id)
+    }
+
+    pub fn conv_has_streams(&self, conv_id: &str) -> bool {
+        self.active_streams.values().any(|s| s.conversation_id == conv_id)
+    }
+
+    pub fn conv_stream_count(&self, conv_id: &str) -> usize {
+        self.active_streams.values().filter(|s| s.conversation_id == conv_id).count()
+    }
+
+    pub fn conv_index_by_id(&self, id: &str) -> Option<usize> {
+        self.conversations.iter().position(|c| c.id == id)
     }
 
     pub fn theme(&self) -> Theme {
@@ -146,101 +246,174 @@ impl ChatApp {
     }
 
     fn start_stream(&mut self, model_id: &str) -> Task<Message> {
-        self.is_streaming = true;
-        self.current_response.clear();
         self.error_message = None;
-        self.stream_start = Some(Instant::now());
-        self.last_latency_ms = None;
-        self.streaming_model = Some(model_id.to_string());
-
-        let messages = self.conversations[self.active_conversation].messages.clone();
+        let conv = &mut self.conversations[self.active_conversation];
+        let conv_id = conv.id.clone();
+        let msg_index = conv.push_streaming_assistant(Some(model_id.to_string()));
+        let messages = conv.messages.clone();
         let provider_config = self.config.provider_config_for_model(model_id);
-        let system_prompt = if self.config.system_prompt.is_empty() {
-            None
-        } else {
-            Some(self.config.system_prompt.clone())
-        };
+        let system_prompt = if self.config.system_prompt.is_empty() { None } else { Some(self.config.system_prompt.clone()) };
         let temperature = self.config.temperature.parse::<f64>().ok();
         let max_tokens = self.config.max_tokens.parse::<u32>().ok();
 
+        let stream_id = self.next_stream_id;
+        self.next_stream_id += 1;
+
         let (task, handle) = Task::run(
             crate::api::stream_completion(provider_config, messages, system_prompt, temperature, max_tokens),
-            |event| match event {
-                crate::api::LlmEvent::Token(t) => Message::StreamToken(t),
-                crate::api::LlmEvent::Done => Message::StreamComplete,
-                crate::api::LlmEvent::Error(e) => Message::StreamError(e),
+            move |event| match event {
+                crate::api::LlmEvent::Token(t) => Message::StreamToken(stream_id, t),
+                crate::api::LlmEvent::Done => Message::StreamComplete(stream_id),
+                crate::api::LlmEvent::Error(e) => Message::StreamError(stream_id, e),
             },
         ).abortable();
-        self.abort_handle = Some(handle);
+
+        self.active_streams.insert(stream_id, ActiveStream {
+            model: model_id.to_string(),
+            current_response: String::new(),
+            message_index: msg_index,
+            conversation_id: conv_id,
+            abort_handle: handle,
+            stream_start: Instant::now(),
+            first_token_received: false,
+        });
         task
+    }
+
+    fn start_multi_stream(&mut self, model_ids: &[String]) -> Task<Message> {
+        let tasks: Vec<Task<Message>> = model_ids.iter().map(|id| self.start_stream(id)).collect();
+        Task::batch(tasks)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::InputChanged(value) => {
-                self.input_value = value;
-                Task::none()
-            }
+            Message::InputChanged(value) => { self.input_value = value; Task::none() }
             Message::SendMessage => {
-                if self.input_value.trim().is_empty() || self.is_streaming {
-                    return Task::none();
-                }
-
+                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
                 let text = self.input_value.clone();
                 self.input_value.clear();
                 self.error_message = None;
-
+                self.model_picker_open = false;
+                self.last_latency_ms = None;
                 let model_id = self.selected_model.clone();
                 let conv = &mut self.conversations[self.active_conversation];
                 conv.add_user_message(&text, Some(model_id.clone()));
+                // Set token count on user message
+                if let Some(msg) = conv.messages.last_mut() {
+                    msg.token_count = Some(crate::cost::estimate_tokens(&text));
+                }
                 crate::db::save_conversation(&self.db, conv);
-
                 self.start_stream(&model_id)
             }
-            Message::StreamToken(token) => {
-                if self.last_latency_ms.is_none() {
-                    if let Some(start) = self.stream_start {
-                        self.last_latency_ms = Some(start.elapsed().as_millis());
+            Message::SendToModels(model_ids) => {
+                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() || model_ids.is_empty() { return Task::none(); }
+                let text = self.input_value.clone();
+                self.input_value.clear();
+                self.error_message = None;
+                self.model_picker_open = false;
+                self.last_latency_ms = None;
+                let conv = &mut self.conversations[self.active_conversation];
+                conv.add_user_message(&text, None);
+                if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
+                crate::db::save_conversation(&self.db, conv);
+                self.start_multi_stream(&model_ids)
+            }
+            Message::SendToAll => {
+                let all_ids: Vec<String> = self.config.all_models().iter().map(|(_, id)| id.clone()).collect();
+                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
+                let text = self.input_value.clone();
+                self.input_value.clear();
+                self.error_message = None;
+                self.model_picker_open = false;
+                self.last_latency_ms = None;
+                let conv = &mut self.conversations[self.active_conversation];
+                conv.add_user_message(&text, None);
+                if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
+                crate::db::save_conversation(&self.db, conv);
+                self.start_multi_stream(&all_ids)
+            }
+            Message::ToggleModelSelection(model_id) => {
+                if self.selected_models.contains(&model_id) { self.selected_models.remove(&model_id); }
+                else { self.selected_models.insert(model_id); }
+                Task::none()
+            }
+            Message::StreamToken(id, token) => {
+                if let Some(stream) = self.active_streams.get_mut(&id) {
+                    if !stream.first_token_received {
+                        stream.first_token_received = true;
+                        self.last_latency_ms = Some(stream.stream_start.elapsed().as_millis());
+                    }
+                    stream.current_response.push_str(&token);
+                    let content = stream.current_response.clone();
+                    let idx = stream.message_index;
+                    let conv_id = stream.conversation_id.clone();
+                    if let Some(ci) = self.conv_index_by_id(&conv_id) {
+                        self.conversations[ci].update_streaming_at(idx, &content);
                     }
                 }
-                self.current_response.push_str(&token);
-                let model = self.streaming_model.clone();
-                let conv = &mut self.conversations[self.active_conversation];
-                conv.update_assistant_streaming(&self.current_response, model);
                 Task::none()
             }
-            Message::StreamComplete => {
-                self.is_streaming = false;
-                self.stream_start = None;
-                self.abort_handle = None;
-                let model = self.streaming_model.take();
-                let conv = &mut self.conversations[self.active_conversation];
-                conv.finalize_assistant_message(&self.current_response, model);
-                self.current_response.clear();
-                crate::db::save_conversation(&self.db, conv);
+            Message::StreamComplete(id) => {
+                if let Some(stream) = self.active_streams.remove(&id) {
+                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
+                        let conv = &mut self.conversations[ci];
+                        conv.finalize_at(stream.message_index, &stream.current_response);
+                        if let Some(msg) = conv.messages.get_mut(stream.message_index) {
+                            let tokens = crate::cost::estimate_tokens(&msg.content);
+                            msg.token_count = Some(tokens);
+                            let cost = crate::cost::message_cost(msg.model.as_deref().unwrap_or(""), &msg.role, tokens);
+                            self.session_cost += cost;
+                        }
+                        crate::db::save_conversation(&self.db, conv);
+                    }
+                }
                 Task::none()
             }
-            Message::StreamError(err) => {
-                self.is_streaming = false;
-                self.stream_start = None;
-                self.abort_handle = None;
-                self.streaming_model = None;
+            Message::StreamError(id, err) => {
+                if let Some(stream) = self.active_streams.remove(&id) {
+                    let error_content = format!("[Error: {err}]");
+                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
+                        let conv = &mut self.conversations[ci];
+                        conv.finalize_at(stream.message_index, &error_content);
+                        crate::db::save_conversation(&self.db, conv);
+                    }
+                }
                 self.error_message = Some(err);
-                self.current_response.clear();
                 Task::none()
             }
             Message::StopStreaming => {
-                if let Some(handle) = self.abort_handle.take() {
-                    handle.abort();
+                let active_conv_id = self.conversations[self.active_conversation].id.clone();
+                let all_streams: HashMap<StreamId, ActiveStream> = std::mem::take(&mut self.active_streams);
+                let mut remaining = HashMap::new();
+                let mut to_finalize = Vec::new();
+                for (id, stream) in all_streams {
+                    if stream.conversation_id == active_conv_id {
+                        stream.abort_handle.abort();
+                        to_finalize.push(stream);
+                    } else {
+                        remaining.insert(id, stream);
+                    }
                 }
-                self.is_streaming = false;
-                self.stream_start = None;
-                let model = self.streaming_model.take();
-                if !self.current_response.is_empty() {
-                    let conv = &mut self.conversations[self.active_conversation];
-                    conv.finalize_assistant_message(&self.current_response, model);
-                    self.current_response.clear();
+                self.active_streams = remaining;
+                if let Some(ci) = self.conv_index_by_id(&active_conv_id) {
+                    let conv = &mut self.conversations[ci];
+                    for stream in to_finalize {
+                        let content = if stream.current_response.is_empty() { "[stopped]".to_string() } else { stream.current_response };
+                        conv.finalize_at(stream.message_index, &content);
+                    }
                     crate::db::save_conversation(&self.db, conv);
+                }
+                Task::none()
+            }
+            Message::StopStream(id) => {
+                if let Some(stream) = self.active_streams.remove(&id) {
+                    stream.abort_handle.abort();
+                    let content = if stream.current_response.is_empty() { "[stopped]".to_string() } else { stream.current_response };
+                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
+                        let conv = &mut self.conversations[ci];
+                        conv.finalize_at(stream.message_index, &content);
+                        crate::db::save_conversation(&self.db, conv);
+                    }
                 }
                 Task::none()
             }
@@ -248,6 +421,9 @@ impl ChatApp {
                 if idx < self.conversations.len() {
                     self.active_conversation = idx;
                     self.view = View::Chat;
+                    self.model_picker_open = false;
+                    self.quick_switcher_open = false;
+                    self.diff_active = None;
                 }
                 Task::none()
             }
@@ -257,12 +433,11 @@ impl ChatApp {
                 self.conversations.push(conv);
                 self.active_conversation = self.conversations.len() - 1;
                 self.view = View::Chat;
+                self.model_picker_open = false;
                 Task::none()
             }
             Message::DeleteConversation(idx) => {
-                if self.conversations.len() <= 1 {
-                    return Task::none();
-                }
+                if self.conversations.len() <= 1 { return Task::none(); }
                 let conv = &self.conversations[idx];
                 crate::db::delete_conversation(&self.db, &conv.id);
                 self.conversations.remove(idx);
@@ -273,84 +448,36 @@ impl ChatApp {
                 }
                 Task::none()
             }
-            Message::ShowSettings => {
-                self.view = View::Settings;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::ShowChat => {
-                self.view = View::Chat;
-                Task::none()
-            }
-            Message::SetProvider(provider) => {
-                self.config.active_provider = provider;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetApiKey(key) => {
-                self.config.active_provider_config_mut().api_key = key;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetApiUrl(url) => {
-                self.config.active_provider_config_mut().api_url = url;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetModel(model) => {
-                self.config.active_provider_config_mut().model = model;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetSystemPrompt(prompt) => {
-                self.config.system_prompt = prompt;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetTemperature(val) => {
-                self.config.temperature = val;
-                self.config_saved = false;
-                Task::none()
-            }
-            Message::SetMaxTokens(val) => {
-                self.config.max_tokens = val;
-                self.config_saved = false;
-                Task::none()
-            }
+            Message::ShowSettings => { self.view = View::Settings; self.config_saved = false; self.model_picker_open = false; Task::none() }
+            Message::ShowChat => { self.view = View::Chat; Task::none() }
+            Message::SetProvider(p) => { self.config.active_provider = p; self.config_saved = false; Task::none() }
+            Message::SetApiKey(k) => { self.config.active_provider_config_mut().api_key = k; self.config_saved = false; Task::none() }
+            Message::SetApiUrl(u) => { self.config.active_provider_config_mut().api_url = u; self.config_saved = false; Task::none() }
+            Message::SetModel(m) => { self.config.active_provider_config_mut().model = m; self.config_saved = false; Task::none() }
+            Message::SetSystemPrompt(p) => { self.config.system_prompt = p; self.config_saved = false; Task::none() }
+            Message::SetTemperature(v) => { self.config.temperature = v; self.config_saved = false; Task::none() }
+            Message::SetMaxTokens(v) => { self.config.max_tokens = v; self.config_saved = false; Task::none() }
             Message::ApplyPreset(preset) => {
                 self.config.apply_preset(&preset);
                 self.selected_model = self.config.active_provider_config().model.clone();
                 self.config_saved = false;
                 Task::none()
             }
-            Message::SaveConfig => {
-                self.config.save();
-                self.config_saved = true;
-                Task::none()
-            }
-            Message::CopyToClipboard(content) => {
-                iced::clipboard::write(content)
-            }
+            Message::SaveConfig => { self.config.save(); self.config_saved = true; Task::none() }
+            Message::CopyToClipboard(content) => iced::clipboard::write(content),
             Message::StartRename(idx) => {
                 self.rename_value = self.conversations[idx].title.clone();
                 self.renaming_conversation = Some(idx);
                 iced::widget::operation::focus("rename-input")
             }
-            Message::RenameChanged(value) => {
-                self.rename_value = value;
-                Task::none()
-            }
+            Message::RenameChanged(value) => { self.rename_value = value; Task::none() }
             Message::FinishRename => {
                 if let Some(idx) = self.renaming_conversation.take() {
                     let new_title = self.rename_value.trim().to_string();
                     if !new_title.is_empty() && idx < self.conversations.len() {
                         self.conversations[idx].title = new_title;
                         let id = self.conversations[idx].id.clone();
-                        crate::db::rename_conversation(
-                            &self.db,
-                            &id,
-                            &self.conversations[idx].title,
-                        );
+                        crate::db::rename_conversation(&self.db, &id, &self.conversations[idx].title);
                     }
                 }
                 self.rename_value.clear();
@@ -362,136 +489,203 @@ impl ChatApp {
                 self.model_picker_open = false;
                 self.review_picker = None;
                 self.analyze_source_conversation = None;
+                self.quick_switcher_open = false;
+                self.command_palette_open = false;
+                self.tag_input_open = false;
+                self.diff_active = None;
                 Task::none()
             }
             Message::RetryMessage => {
-                if self.is_streaming {
-                    return Task::none();
-                }
+                if self.is_active_conv_streaming() { return Task::none(); }
                 let conv = &mut self.conversations[self.active_conversation];
-                // Grab the model from the last assistant message before removing it
                 let retry_model = conv.messages.last()
                     .filter(|m| m.role == Role::Assistant)
                     .and_then(|m| m.model.clone())
                     .unwrap_or_else(|| self.selected_model.clone());
-                // Remove last assistant message if present
-                if let Some(last) = conv.messages.last() {
-                    if last.role == Role::Assistant {
-                        conv.messages.pop();
-                    }
-                }
-                if conv.messages.is_empty() {
-                    return Task::none();
-                }
+                if let Some(last) = conv.messages.last() { if last.role == Role::Assistant { conv.messages.pop(); } }
+                if conv.messages.is_empty() { return Task::none(); }
                 crate::db::save_conversation(&self.db, conv);
-
+                self.last_latency_ms = None;
                 self.start_stream(&retry_model)
             }
             Message::DeleteMessage(idx) => {
                 let conv = &mut self.conversations[self.active_conversation];
-                if idx < conv.messages.len() {
-                    conv.messages.remove(idx);
-                    crate::db::save_conversation(&self.db, conv);
-                }
+                if idx < conv.messages.len() { conv.messages.remove(idx); crate::db::save_conversation(&self.db, conv); }
                 Task::none()
             }
-            Message::ToggleModelPicker => {
-                self.model_picker_open = !self.model_picker_open;
-                Task::none()
-            }
+            Message::ToggleModelPicker => { self.model_picker_open = !self.model_picker_open; Task::none() }
             Message::SelectModel(model_id) => {
-                self.selected_model = model_id;
+                self.selected_model = model_id.clone();
                 self.model_picker_open = false;
+                self.config.selected_model = Some(model_id);
+                self.config.save();
                 Task::none()
             }
-            Message::ShowReviewPicker(idx) => {
-                self.review_picker = Some(idx);
-                Task::none()
-            }
-            Message::DismissReviewPicker => {
-                self.review_picker = None;
-                Task::none()
-            }
+            Message::ShowReviewPicker(idx) => { self.review_picker = Some(idx); Task::none() }
+            Message::DismissReviewPicker => { self.review_picker = None; Task::none() }
             Message::ReviewWith(model_id) => {
                 let review_idx = self.review_picker.take();
-                if self.is_streaming {
-                    return Task::none();
-                }
-                // Get the specific assistant message to review
+                if self.is_active_conv_streaming() { return Task::none(); }
                 let conv = &self.conversations[self.active_conversation];
-                let review_content = review_idx
-                    .and_then(|idx| conv.messages.get(idx))
-                    .filter(|m| m.role == Role::Assistant)
-                    .map(|m| m.content.clone())
-                    .unwrap_or_default();
-                if review_content.is_empty() {
-                    return Task::none();
-                }
-                let prompt = format!(
-                    "[Review request]\nPlease review the following response and provide feedback, corrections, or improvements:\n\n{}",
-                    review_content
-                );
+                let review_content = review_idx.and_then(|idx| conv.messages.get(idx))
+                    .filter(|m| m.role == Role::Assistant).map(|m| m.content.clone()).unwrap_or_default();
+                if review_content.is_empty() { return Task::none(); }
+                let prompt = format!("[Review request]\nPlease review the following response and provide feedback, corrections, or improvements:\n\n{}", review_content);
                 let conv = &mut self.conversations[self.active_conversation];
                 conv.add_user_message(&prompt, Some(model_id.clone()));
                 crate::db::save_conversation(&self.db, conv);
+                self.last_latency_ms = None;
                 self.start_stream(&model_id)
             }
             Message::AnalyzeConversation(idx) => {
-                if idx < self.conversations.len() {
-                    self.analyze_source_conversation = Some(idx);
-                }
+                if idx < self.conversations.len() { self.analyze_source_conversation = Some(idx); }
                 Task::none()
             }
             Message::AnalyzeWith(model_id) => {
-                let source_idx = match self.analyze_source_conversation.take() {
-                    Some(idx) => idx,
-                    None => return Task::none(),
-                };
-                if self.is_streaming || source_idx >= self.conversations.len() {
-                    return Task::none();
-                }
-                // Format source conversation
+                let source_idx = match self.analyze_source_conversation.take() { Some(idx) => idx, None => return Task::none() };
+                if self.is_active_conv_streaming() || source_idx >= self.conversations.len() { return Task::none(); }
                 let source = &self.conversations[source_idx];
                 let mut formatted = format!("[Analyze conversation] Analyzing: \"{}\"\n\n", source.title);
                 for msg in &source.messages {
                     let role_label = match msg.role {
                         Role::User => "User",
-                        Role::Assistant => {
-                            match &msg.model {
-                                Some(m) => { formatted.push_str(&format!("Assistant ({m})")); "" }
-                                None => "Assistant",
-                            }
-                        }
+                        Role::Assistant => { match &msg.model { Some(m) => { formatted.push_str(&format!("Assistant ({m})")); "" } None => "Assistant" } }
                     };
-                    if !role_label.is_empty() {
-                        formatted.push_str(role_label);
-                    }
+                    if !role_label.is_empty() { formatted.push_str(role_label); }
                     formatted.push_str(": ");
                     formatted.push_str(&msg.content);
                     formatted.push_str("\n\n");
                 }
                 formatted.push_str("Please analyze this conversation. Summarize the key points, identify any errors or areas for improvement, and provide your assessment.");
-
                 let conv = &mut self.conversations[self.active_conversation];
                 conv.add_user_message(&formatted, Some(model_id.clone()));
                 crate::db::save_conversation(&self.db, conv);
+                self.last_latency_ms = None;
                 self.start_stream(&model_id)
             }
-            Message::DismissAnalyzePicker => {
-                self.analyze_source_conversation = None;
+            Message::DismissAnalyzePicker => { self.analyze_source_conversation = None; Task::none() }
+            // Tags + Pins
+            Message::TogglePin(idx) => {
+                if idx < self.conversations.len() {
+                    self.conversations[idx].pinned = !self.conversations[idx].pinned;
+                    let id = self.conversations[idx].id.clone();
+                    crate::db::toggle_pin(&self.db, &id, self.conversations[idx].pinned);
+                    // Re-sort: pinned first, then by original order
+                    let active_id = self.conversations[self.active_conversation].id.clone();
+                    self.conversations.sort_by(|a, b| b.pinned.cmp(&a.pinned));
+                    self.active_conversation = self.conversations.iter().position(|c| c.id == active_id).unwrap_or(0);
+                }
                 Task::none()
             }
-            Message::DismissError => {
-                self.error_message = None;
+            Message::AddTag(tag) => {
+                let conv = &mut self.conversations[self.active_conversation];
+                let tag = tag.trim().to_string();
+                if !tag.is_empty() && !conv.tags.contains(&tag) {
+                    conv.tags.push(tag);
+                    crate::db::set_tags(&self.db, &conv.id, &conv.tags);
+                }
                 Task::none()
             }
+            Message::RemoveTag(tag) => {
+                let conv = &mut self.conversations[self.active_conversation];
+                conv.tags.retain(|t| t != &tag);
+                crate::db::set_tags(&self.db, &conv.id, &conv.tags);
+                Task::none()
+            }
+            Message::ToggleTagInput => { self.tag_input_open = !self.tag_input_open; self.tag_input_value.clear(); Task::none() }
+            Message::TagInputChanged(v) => { self.tag_input_value = v; Task::none() }
+            Message::SubmitTag => {
+                let tag = self.tag_input_value.trim().to_string();
+                self.tag_input_value.clear();
+                self.tag_input_open = false;
+                if !tag.is_empty() {
+                    let conv = &mut self.conversations[self.active_conversation];
+                    if !conv.tags.contains(&tag) {
+                        conv.tags.push(tag);
+                        crate::db::set_tags(&self.db, &conv.id, &conv.tags);
+                    }
+                }
+                Task::none()
+            }
+            // Comparison + Diff
+            Message::ToggleComparisonMode => { self.comparison_mode = !self.comparison_mode; self.diff_active = None; Task::none() }
+            Message::ShowDiff(a, b) => { self.diff_active = Some((a, b)); Task::none() }
+            Message::DismissDiff => { self.diff_active = None; Task::none() }
+            // Quick Switcher
+            Message::ToggleQuickSwitcher => {
+                self.quick_switcher_open = !self.quick_switcher_open;
+                self.quick_switcher_query.clear();
+                self.command_palette_open = false;
+                if self.quick_switcher_open {
+                    return iced::widget::operation::focus("quick-switcher-input");
+                }
+                Task::none()
+            }
+            Message::QuickSwitcherQueryChanged(q) => { self.quick_switcher_query = q; Task::none() }
+            Message::QuickSwitcherSelect(idx) => {
+                self.quick_switcher_open = false;
+                self.quick_switcher_query.clear();
+                if idx < self.conversations.len() {
+                    self.active_conversation = idx;
+                    self.view = View::Chat;
+                }
+                Task::none()
+            }
+            // Command Palette
+            Message::ToggleCommandPalette => {
+                self.command_palette_open = !self.command_palette_open;
+                self.command_palette_query.clear();
+                self.quick_switcher_open = false;
+                if self.command_palette_open {
+                    return iced::widget::operation::focus("command-palette-input");
+                }
+                Task::none()
+            }
+            Message::CommandPaletteQueryChanged(q) => { self.command_palette_query = q; Task::none() }
+            // Sidebar search
+            Message::SidebarSearchChanged(query) => {
+                self.sidebar_search_query = query.clone();
+                if query.trim().is_empty() {
+                    self.sidebar_search_results = None;
+                } else {
+                    self.sidebar_search_results = Some(crate::db::search_conversations(&self.db, &query));
+                }
+                Task::none()
+            }
+            Message::ClearSidebarSearch => {
+                self.sidebar_search_query.clear();
+                self.sidebar_search_results = None;
+                Task::none()
+            }
+            // Export
+            Message::ExportMarkdown => {
+                let conv = &self.conversations[self.active_conversation];
+                let md = crate::export::conversation_to_markdown(conv);
+                iced::clipboard::write(md)
+            }
+            // Ollama
+            Message::OllamaModelsDiscovered(models) => {
+                self.config.ollama_models = models;
+                Task::none()
+            }
+            Message::RefreshOllamaModels => {
+                let url = self.config.ollama.api_url.clone();
+                Task::perform(
+                    async move { crate::api::ollama::discover_models(&url).await },
+                    |result| match result {
+                        Ok(models) => Message::OllamaModelsDiscovered(models),
+                        Err(_) => Message::OllamaModelsDiscovered(Vec::new()),
+                    },
+                )
+            }
+            Message::DismissError => { self.error_message = None; Task::none() }
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let sidebar = ui::sidebar::view(self);
         let right_panel = ui::right_panel::view(self);
-        let bottom_bar = ui::bottom_bar::view();
+        let bottom_bar = ui::bottom_bar::view(self);
 
         let sep = |_: &Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(Color::from_rgb8(0x1e, 0x28, 0x34))),
@@ -502,47 +696,46 @@ impl ChatApp {
             View::Chat => {
                 let chat = ui::chat_view::view(self);
                 let input = ui::input_bar::view(self);
-                column![
-                    container(chat).height(Length::Fill),
-                    input,
-                ].into()
+                column![container(chat).height(Length::Fill), input].into()
             }
             View::Settings => ui::settings::view(self),
         };
 
-        let sep_v = || container(iced::widget::Space::new())
-            .width(1).height(Length::Fill).style(sep);
+        let sep_v = || container(iced::widget::Space::new()).width(1).height(Length::Fill).style(sep);
+        let main_row = row![sidebar, sep_v(), container(content).width(Length::Fill), sep_v(), right_panel];
+        let layout = column![container(main_row).height(Length::Fill), bottom_bar];
+        let base: Element<Message> = container(layout).width(Length::Fill).height(Length::Fill).into();
 
-        let main_row = row![
-            sidebar,
-            sep_v(),
-            container(content).width(Length::Fill),
-            sep_v(),
-            right_panel,
-        ];
+        // Overlays: quick switcher and command palette
+        if self.quick_switcher_open {
+            let overlay = ui::quick_switcher::view(self);
+            return iced::widget::stack![base, overlay].into();
+        }
+        if self.command_palette_open {
+            let overlay = ui::command_palette::view(self);
+            return iced::widget::stack![base, overlay].into();
+        }
 
-        let layout = column![
-            container(main_row).height(Length::Fill),
-            bottom_bar,
-        ];
-
-        container(layout)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        base
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         iced::event::listen_with(|event, _status, _id| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
-                key, modifiers, ..
-            }) = event
-            {
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
                 if modifiers.command() {
                     if let keyboard::Key::Character(ref c) = key {
-                        if c.as_str() == "n" {
-                            return Some(Message::NewConversation);
+                        match c.as_str() {
+                            "n" => return Some(Message::NewConversation),
+                            "k" => return Some(Message::ToggleQuickSwitcher),
+                            "p" => return Some(Message::ToggleCommandPalette),
+                            "e" => return Some(Message::ExportMarkdown),
+                            _ => {}
                         }
+                    }
+                }
+                if modifiers.command() && modifiers.shift() {
+                    if let keyboard::Key::Named(keyboard::key::Named::Enter) = key {
+                        return Some(Message::SendToAll);
                     }
                 }
                 if let keyboard::Key::Named(keyboard::key::Named::Escape) = key {

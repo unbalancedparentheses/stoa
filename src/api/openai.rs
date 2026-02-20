@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use crate::api::LlmEvent;
-use crate::model::{ChatMessage, ProviderConfig, Role};
+use crate::model::{ChatMessage, Provider, ProviderConfig, Role};
 
 fn to_openai_messages(
     messages: &[ChatMessage],
@@ -45,13 +45,14 @@ pub fn stream(
     max_tokens: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     Box::pin(async_stream::stream! {
-        if config.api_key.is_empty() {
-            yield LlmEvent::Error("OpenAI API key not set. Go to Settings to configure.".into());
+        let is_ollama = config.provider == Provider::Ollama;
+        if !is_ollama && config.api_key.is_empty() {
+            yield LlmEvent::Error("API key not set. Go to Settings to configure.".into());
             return;
         }
 
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(if is_ollama { 120 } else { 30 }))
             .build()
             .unwrap_or_default();
 
@@ -67,11 +68,13 @@ pub fn stream(
             body["max_completion_tokens"] = serde_json::json!(m);
         }
 
-        let request = client
+        let mut req = client
             .post(&config.api_url)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
-            .body(body.to_string());
+            .header("Content-Type", "application/json");
+        if !is_ollama {
+            req = req.header("Authorization", format!("Bearer {}", config.api_key));
+        }
+        let request = req.body(body.to_string());
 
         let mut es = match EventSource::new(request) {
             Ok(es) => es,
