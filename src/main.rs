@@ -12,15 +12,15 @@ mod ui;
 use app::ChatApp;
 
 fn main() -> iced::Result {
-    eprintln!("[rust-chat] starting...");
+    eprintln!("[stoa] starting...");
 
     let result = iced::application(ChatApp::new, ChatApp::update, ChatApp::view)
-        .title("Morphe Chat")
+        .title("Stoa")
         .subscription(ChatApp::subscription)
         .theme(ChatApp::theme)
         .window_size((1200.0, 800.0))
         .run();
 
-    eprintln!("[rust-chat] exited with: {result:?}");
+    eprintln!("[stoa] exited with: {result:?}");
     result
 }

@@ -43,7 +43,7 @@ fn init_schema(conn: &Connection) {
 pub fn open() -> Connection {
     let dir = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("rust-chat");
+        .join("stoa");
     std::fs::create_dir_all(&dir).ok();
     let path = dir.join("chat.db");
     let conn = Connection::open(&path).expect("failed to open database");
@@ -187,7 +187,7 @@ pub fn search_conversations(conn: &Connection, query: &str) -> Vec<String> {
 fn migrate_from_json(conn: &Connection) {
     let json_dir = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("rust-chat")
+        .join("stoa")
         .join("conversations");
 
     if !json_dir.exists() {
@@ -214,5 +214,5 @@ fn migrate_from_json(conn: &Connection) {
         }
     }
 
-    eprintln!("[rust-chat] migrated JSON conversations to SQLite");
+    eprintln!("[stoa] migrated JSON conversations to SQLite");
 }
