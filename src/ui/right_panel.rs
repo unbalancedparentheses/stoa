@@ -1,14 +1,9 @@
 use iced::widget::{column, container, row, text};
-use iced::{Element, Length, Color, Theme};
+use iced::{Element, Length, Theme};
 
 use crate::app::{ChatApp, Message};
-use crate::model::Provider;
-
-const BG: Color = Color::from_rgb8(0x12, 0x1a, 0x24);
-const TEXT_HEAD: Color = Color::from_rgb8(0xe8, 0xe0, 0xd0);
-const TEXT_SEC: Color = Color::from_rgb8(0x8a, 0x90, 0x9a);
-const TEXT_MUTED: Color = Color::from_rgb8(0x50, 0x5a, 0x66);
-const DIVIDER: Color = Color::from_rgb8(0x1e, 0x28, 0x34);
+use crate::theme::*;
+use crate::ui::input_bar::{short_model_name, provider_icon};
 
 fn info_row<'a>(icon: &'a str, label: &'a str, value: String) -> Element<'a, Message> {
     row![
@@ -20,11 +15,13 @@ fn info_row<'a>(icon: &'a str, label: &'a str, value: String) -> Element<'a, Mes
 }
 
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
-    let provider_name = match app.config.active_provider {
-        Provider::OpenAI => "OpenAI",
-        Provider::Anthropic => "Anthropic",
+    let icon = provider_icon(&app.selected_model);
+    let provider_name = if app.selected_model.contains("claude") || app.selected_model.contains("haiku") || app.selected_model.contains("sonnet") || app.selected_model.contains("opus") {
+        "Anthropic"
+    } else {
+        "OpenAI"
     };
-    let model = &app.config.active_provider_config().model;
+    let model = short_model_name(&app.selected_model);
     let conv = &app.conversations[app.active_conversation];
     let msg_count = conv.messages.len();
     let conv_count = app.conversations.len();
@@ -40,7 +37,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         text("System").size(11).color(TEXT_MUTED),
         iced::widget::Space::new().height(8),
         info_row("\u{25CB}", "Provider", provider_name.to_string()),
-        info_row("\u{25CB}", "Model", model.clone()),
+        info_row("\u{25CB}", "Model", format!("{icon} {model}")),
         info_row("\u{25CB}", "Status", if app.is_streaming { "Streaming".into() } else { "Ready".into() }),
     ].spacing(6)).padding([12, 20]);
 

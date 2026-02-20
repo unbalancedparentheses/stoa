@@ -3,17 +3,7 @@ use iced::{Alignment, Element, Length, Color, Border, Theme};
 
 use crate::app::{ChatApp, Message};
 use crate::model::Provider;
-
-const MAIN_BG: Color = Color::from_rgb8(0x16, 0x1e, 0x2a);
-const HEADER_BG: Color = Color::from_rgb8(0x14, 0x1c, 0x26);
-const CARD_BG: Color = Color::from_rgb8(0x1a, 0x24, 0x30);
-const INPUT_BG: Color = Color::from_rgb8(0x12, 0x1a, 0x24);
-const ACCENT: Color = Color::from_rgb8(0xc9, 0xa8, 0x4c);
-const TEXT_PRIMARY: Color = Color::from_rgb8(0xe8, 0xe0, 0xd0);
-const TEXT_SECONDARY: Color = Color::from_rgb8(0x8a, 0x90, 0x9a);
-const TEXT_MUTED: Color = Color::from_rgb8(0x50, 0x5a, 0x66);
-const BORDER_DEFAULT: Color = Color::from_rgb8(0x3a, 0x4a, 0x5a);
-const BORDER_SUBTLE: Color = Color::from_rgb8(0x1e, 0x28, 0x34);
+use crate::theme::*;
 
 fn field_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
@@ -29,8 +19,8 @@ fn field_style(_theme: &Theme, status: text_input::Status) -> text_input::Style 
         },
         icon: TEXT_MUTED,
         placeholder: TEXT_MUTED,
-        value: TEXT_PRIMARY,
-        selection: Color::from_rgb8(0x2a, 0x3e, 0x55),
+        value: TEXT_HEAD,
+        selection: SELECTION,
     }
 }
 
@@ -41,7 +31,7 @@ fn tab_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
             (false, button::Status::Hovered) => Color::from_rgb8(0x16, 0x20, 0x2c),
             _ => Color::TRANSPARENT,
         };
-        let fg = if active { ACCENT } else { TEXT_SECONDARY };
+        let fg = if active { ACCENT } else { TEXT_SEC };
         button::Style {
             background: Some(iced::Background::Color(bg)),
             text_color: fg,
@@ -58,10 +48,10 @@ fn chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style 
     move |_: &Theme, status: button::Status| {
         let bg = match (active, status) {
             (true, _) => Color::from_rgb8(0x2a, 0x24, 0x14),
-            (false, button::Status::Hovered) => Color::from_rgb8(0x1a, 0x24, 0x30),
+            (false, button::Status::Hovered) => BG_HOVER,
             _ => Color::TRANSPARENT,
         };
-        let fg = if active { ACCENT } else { TEXT_SECONDARY };
+        let fg = if active { ACCENT } else { TEXT_SEC };
         let bc = if active { ACCENT } else { BORDER_DEFAULT };
         button::Style {
             background: Some(iced::Background::Color(bg)),
@@ -81,7 +71,7 @@ fn save_style(saved: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
         if saved {
             button::Style {
                 background: Some(iced::Background::Color(Color::from_rgb8(0x14, 0x2a, 0x1e))),
-                text_color: Color::from_rgb8(0x3f, 0xb8, 0x8c),
+                text_color: SUCCESS,
                 border: Border {
                     radius: 8.0.into(),
                     width: 1.0,
@@ -92,7 +82,7 @@ fn save_style(saved: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
         } else {
             let bg = match status {
                 button::Status::Hovered => Color::from_rgb8(0x2a, 0x24, 0x14),
-                _ => Color::from_rgb8(0x1a, 0x24, 0x30),
+                _ => CARD_BG,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
@@ -127,7 +117,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     // Header
     let header = container(
         row![
-            text("Settings").size(15).color(TEXT_PRIMARY),
+            text("Settings").size(15).color(TEXT_HEAD),
         ]
     )
     .width(Length::Fill)
@@ -221,6 +211,41 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(card_style);
 
+    // Generation settings
+    let generation_section = container(
+        column![
+            text("Generation").size(12).color(TEXT_MUTED),
+            labeled_field("Temperature", text_input("0.7", &config.temperature)
+                .on_input(Message::SetTemperature)
+                .padding([10, 14])
+                .size(13)
+                .style(field_style)),
+            labeled_field("Max Tokens", text_input("4096", &config.max_tokens)
+                .on_input(Message::SetMaxTokens)
+                .padding([10, 14])
+                .size(13)
+                .style(field_style)),
+        ].spacing(12)
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(card_style);
+
+    // System prompt
+    let system_prompt_section = container(
+        column![
+            text("System Prompt").size(12).color(TEXT_MUTED),
+            text_input("You are a helpful assistant...", &config.system_prompt)
+                .on_input(Message::SetSystemPrompt)
+                .padding([10, 14])
+                .size(13)
+                .style(field_style),
+        ].spacing(8)
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(card_style);
+
     // Save
     let save_label = if app.config_saved { "\u{2713} Saved" } else { "Save" };
     let save_btn = button(
@@ -235,6 +260,8 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         provider_toggle,
         model_section,
         fields_section,
+        generation_section,
+        system_prompt_section,
         save_btn,
     ]
     .spacing(12)

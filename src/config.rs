@@ -7,7 +7,16 @@ pub struct AppConfig {
     pub active_provider: Provider,
     pub openai: ProviderConfig,
     pub anthropic: ProviderConfig,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default = "default_temperature")]
+    pub temperature: String,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: String,
 }
+
+fn default_temperature() -> String { "0.7".to_string() }
+fn default_max_tokens() -> String { "4096".to_string() }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -15,6 +24,9 @@ impl Default for AppConfig {
             active_provider: Provider::OpenAI,
             openai: ProviderConfig::default_openai(),
             anthropic: ProviderConfig::default_anthropic(),
+            system_prompt: String::new(),
+            temperature: "0.7".to_string(),
+            max_tokens: "4096".to_string(),
         }
     }
 }
@@ -59,6 +71,43 @@ impl AppConfig {
             Provider::OpenAI => &mut self.openai,
             Provider::Anthropic => &mut self.anthropic,
         }
+    }
+
+    /// Build a ProviderConfig for a specific model id, using the stored API keys/URLs.
+    pub fn provider_config_for_model(&self, model: &str) -> ProviderConfig {
+        let is_anthropic = model.contains("claude")
+            || model.contains("anthropic")
+            || model.contains("haiku")
+            || model.contains("sonnet")
+            || model.contains("opus");
+        if is_anthropic {
+            ProviderConfig {
+                provider: Provider::Anthropic,
+                api_url: self.anthropic.api_url.clone(),
+                api_key: self.anthropic.api_key.clone(),
+                model: model.to_string(),
+            }
+        } else {
+            ProviderConfig {
+                provider: Provider::OpenAI,
+                api_url: self.openai.api_url.clone(),
+                api_key: self.openai.api_key.clone(),
+                model: model.to_string(),
+            }
+        }
+    }
+
+    /// Hardcoded list of (display_name, model_id).
+    pub fn available_models() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("GPT-4.1", "gpt-4.1"),
+            ("GPT-5", "gpt-5"),
+            ("o3", "o3"),
+            ("o4-mini", "o4-mini"),
+            ("Claude Opus", "claude-opus-4-20250514"),
+            ("Claude Sonnet", "claude-sonnet-4-20250514"),
+            ("Claude Haiku", "claude-haiku-4-5-20251001"),
+        ]
     }
 
     pub fn apply_preset(&mut self, preset: &str) {

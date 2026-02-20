@@ -1,16 +1,10 @@
-use iced::widget::{button, column, container, row, scrollable, text, Column};
-use iced::{Alignment, Element, Length, Color, Border, Theme};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
+use iced::{Alignment, Border, Element, Length, Color, Theme};
 
 use crate::app::{ChatApp, Message, View};
-
-const BG: Color = Color::from_rgb8(0x12, 0x1a, 0x24);
-const BG_HOVER: Color = Color::from_rgb8(0x1a, 0x24, 0x30);
-const BG_ACTIVE: Color = Color::from_rgb8(0x1e, 0x28, 0x36);
-const ACCENT: Color = Color::from_rgb8(0xc9, 0xa8, 0x4c);
-const TEXT_HEAD: Color = Color::from_rgb8(0xe8, 0xe0, 0xd0);
-const TEXT_SEC: Color = Color::from_rgb8(0x8a, 0x90, 0x9a);
-const TEXT_MUTED: Color = Color::from_rgb8(0x50, 0x5a, 0x66);
-const DIVIDER: Color = Color::from_rgb8(0x1e, 0x28, 0x34);
+use crate::config::AppConfig;
+use crate::theme::*;
+use crate::ui::input_bar::provider_icon;
 
 fn nav_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_: &Theme, status: button::Status| {
@@ -48,10 +42,69 @@ fn del_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         text_color: match status {
-            button::Status::Hovered => Color::from_rgb8(0xda, 0x6b, 0x6b),
+            button::Status::Hovered => DANGER,
             _ => TEXT_MUTED,
         },
         ..Default::default()
+    }
+}
+
+fn edit_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: match status {
+            button::Status::Hovered => ACCENT,
+            _ => TEXT_MUTED,
+        },
+        ..Default::default()
+    }
+}
+
+fn analyze_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: match status {
+            button::Status::Hovered => ACCENT,
+            _ => TEXT_MUTED,
+        },
+        ..Default::default()
+    }
+}
+
+fn analyze_chip_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(match status {
+            button::Status::Hovered => ACCENT_DIM,
+            _ => BG_ACTIVE,
+        })),
+        text_color: match status {
+            button::Status::Hovered => ACCENT,
+            _ => TEXT_SEC,
+        },
+        border: Border {
+            radius: 10.0.into(),
+            width: 1.0,
+            color: BORDER_DEFAULT,
+        },
+        ..Default::default()
+    }
+}
+
+fn rename_input_style(_: &Theme, status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: iced::Background::Color(INPUT_BG),
+        border: Border {
+            radius: 4.0.into(),
+            width: 1.0,
+            color: match status {
+                text_input::Status::Focused { .. } => ACCENT,
+                _ => BORDER_DEFAULT,
+            },
+        },
+        icon: TEXT_MUTED,
+        placeholder: TEXT_MUTED,
+        value: TEXT_HEAD,
+        selection: SELECTION,
     }
 }
 
@@ -99,30 +152,62 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let mut conv_list = Column::new().spacing(1).padding([0, 10]);
     for (i, conv) in app.conversations.iter().enumerate() {
         let is_active = i == app.active_conversation && chat_active;
+
+        // Inline rename mode
+        if app.renaming_conversation == Some(i) {
+            let input = text_input("", &app.rename_value)
+                .on_input(Message::RenameChanged)
+                .on_submit(Message::FinishRename)
+                .id("rename-input")
+                .size(12)
+                .padding([6, 12])
+                .style(rename_input_style);
+            conv_list = conv_list.push(input);
+            continue;
+        }
+
         let title: String = conv.title.chars().take(22).collect();
         let title = if conv.title.len() > 22 { format!("{title}\u{2026}") } else { title };
 
-        let content: Element<Message> = if can_delete {
-            row![
-                text(title).size(12).width(Length::Fill),
+        let mut action_row = iced::widget::Row::new().spacing(0).align_y(Alignment::Center);
+        action_row = action_row.push(text(title).size(12).width(Length::Fill));
+
+        // Analyze icon (magnifying glass)
+        action_row = action_row.push(
+            button(text("\u{1F50D}").size(10))
+                .on_press(Message::AnalyzeConversation(i))
+                .padding([2, 4]).style(analyze_style),
+        );
+
+        // Pencil edit icon
+        action_row = action_row.push(
+            button(text("\u{270E}").size(11))
+                .on_press(Message::StartRename(i))
+                .padding([2, 4]).style(edit_style),
+        );
+
+        if can_delete {
+            action_row = action_row.push(
                 button(text("\u{00D7}").size(11))
                     .on_press(Message::DeleteConversation(i))
                     .padding([2, 6]).style(del_style),
-            ].align_y(Alignment::Center).into()
-        } else {
-            text(title).size(12).into()
-        };
+            );
+        }
 
         conv_list = conv_list.push(
-            button(content)
+            button(action_row)
                 .on_press(Message::SelectConversation(i))
                 .width(Length::Fill).padding([6, 12])
                 .style(conv_style(is_active)),
         );
     }
 
-    // Status
+    // Status with latency
     let status_text = if app.is_streaming { "Streaming..." } else { "All systems nominal" };
+    let latency_text = match app.last_latency_ms {
+        Some(ms) => format!("{ms} ms"),
+        None => "--".to_string(),
+    };
     let status = container(column![
         text("Status").size(11).color(TEXT_MUTED),
         text(status_text).size(11).color(if app.is_streaming { ACCENT } else { TEXT_SEC }),
@@ -130,23 +215,60 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         row![
             text("Latency").size(10).color(TEXT_MUTED),
             iced::widget::Space::new().width(Length::Fill),
-            text("--").size(10).color(TEXT_SEC).font(iced::Font::MONOSPACE),
+            text(latency_text).size(10).color(TEXT_SEC).font(iced::Font::MONOSPACE),
         ],
     ].spacing(3)).padding([12, 20]);
 
-    let content = column![
+    let mut content = column![
         header,
         nav_label,
         nav,
         history_label,
         scrollable(conv_list).height(Length::Fill),
+    ];
+
+    // Inline analyze model picker
+    if let Some(idx) = app.analyze_source_conversation {
+        let title: String = app.conversations.get(idx)
+            .map(|c| c.title.chars().take(20).collect())
+            .unwrap_or_default();
+        let mut picker_col = Column::new().spacing(4);
+        picker_col = picker_col.push(
+            text(format!("Analyze \"{title}\" with:")).size(11).color(TEXT_MUTED)
+        );
+        let mut chip_row = iced::widget::Row::new().spacing(4);
+        for (display, model_id) in AppConfig::available_models() {
+            let icon = provider_icon(model_id);
+            chip_row = chip_row.push(
+                button(text(format!("{icon} {display}")).size(9))
+                    .on_press(Message::AnalyzeWith(model_id.to_string()))
+                    .padding([3, 6])
+                    .style(analyze_chip_style)
+            );
+        }
+        picker_col = picker_col.push(chip_row);
+        picker_col = picker_col.push(
+            button(text("Cancel").size(10)).padding([2, 6]).style(del_style)
+                .on_press(Message::DismissAnalyzePicker)
+        );
+        content = content.push(
+            container(picker_col).padding([8, 14])
+                .style(|_: &Theme| container::Style {
+                    background: Some(iced::Background::Color(BG_ACTIVE)),
+                    ..Default::default()
+                })
+        );
+    }
+
+    content = content.push(
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
             .style(|_: &Theme| container::Style {
                 background: Some(iced::Background::Color(DIVIDER)),
                 ..Default::default()
-            }),
-        status,
-    ].height(Length::Fill);
+            })
+    );
+    content = content.push(status);
+    let content = content.height(Length::Fill);
 
     container(content)
         .width(260)
