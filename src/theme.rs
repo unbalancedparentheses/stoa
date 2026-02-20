@@ -40,7 +40,9 @@ pub const ERROR_BORDER: Color = Color::from_rgb8(0x44, 0x22, 0x22);
 pub const ERROR_MUTED: Color = Color::from_rgb8(0x88, 0x55, 0x55);
 
 // Diff
+#[allow(dead_code)]
 pub const DIFF_A_BG: Color = Color::from_rgb8(0x1a, 0x3a, 0x2a);
+#[allow(dead_code)]
 pub const DIFF_B_BG: Color = Color::from_rgb8(0x3a, 0x35, 0x1a);
 pub const DIFF_A_TEXT: Color = Color::from_rgb8(0x6a, 0xd0, 0x8a);
 pub const DIFF_B_TEXT: Color = Color::from_rgb8(0xd0, 0xc0, 0x6a);
@@ -49,4 +51,5 @@ pub const DIFF_B_TEXT: Color = Color::from_rgb8(0xd0, 0xc0, 0x6a);
 pub const OVERLAY_BG: Color = Color { r: 0.07, g: 0.10, b: 0.14, a: 0.88 };
 
 // Tags
+#[allow(dead_code)]
 pub const TAG_BG: Color = Color::from_rgb8(0x24, 0x2e, 0x3a);

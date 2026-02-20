@@ -14,6 +14,7 @@ pub type StreamId = usize;
 pub enum View {
     Chat,
     Settings,
+    Analytics,
 }
 
 pub struct ActiveStream {
@@ -66,6 +67,9 @@ pub struct ChatApp {
     pub tag_input_value: String,
     // Cost
     pub session_cost: f64,
+    // System prompt editing
+    pub conv_system_prompt_open: bool,
+    pub conv_system_prompt_value: String,
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +124,6 @@ pub enum Message {
     DismissAnalyzePicker,
     // Tags + Pins
     TogglePin(usize),
-    AddTag(String),
     RemoveTag(String),
     ToggleTagInput,
     TagInputChanged(String),
@@ -138,9 +141,20 @@ pub enum Message {
     CommandPaletteQueryChanged(String),
     // Sidebar search
     SidebarSearchChanged(String),
+    #[allow(dead_code)]
     ClearSidebarSearch,
     // Export
     ExportMarkdown,
+    // Forking
+    ForkConversation(usize), // fork at message index
+    // Per-conversation system prompt
+    ToggleConvSystemPrompt,
+    ConvSystemPromptChanged(String),
+    SaveConvSystemPrompt,
+    // Ratings
+    RateMessage(usize, i8), // (msg_index, -1/0/1)
+    // Analytics
+    ShowAnalytics,
     // Ollama
     OllamaModelsDiscovered(Vec<String>),
     RefreshOllamaModels,
@@ -205,6 +219,8 @@ impl ChatApp {
                 tag_input_open: false,
                 tag_input_value: String::new(),
                 session_cost: 0.0,
+                conv_system_prompt_open: false,
+                conv_system_prompt_value: String::new(),
             },
             discover_task,
         )
@@ -252,7 +268,14 @@ impl ChatApp {
         let msg_index = conv.push_streaming_assistant(Some(model_id.to_string()));
         let messages = conv.messages.clone();
         let provider_config = self.config.provider_config_for_model(model_id);
-        let system_prompt = if self.config.system_prompt.is_empty() { None } else { Some(self.config.system_prompt.clone()) };
+        // Per-conversation system prompt takes priority over global
+        let system_prompt = if !conv.system_prompt.is_empty() {
+            Some(conv.system_prompt.clone())
+        } else if !self.config.system_prompt.is_empty() {
+            Some(self.config.system_prompt.clone())
+        } else {
+            None
+        };
         let temperature = self.config.temperature.parse::<f64>().ok();
         let max_tokens = self.config.max_tokens.parse::<u32>().ok();
 
@@ -263,7 +286,7 @@ impl ChatApp {
             crate::api::stream_completion(provider_config, messages, system_prompt, temperature, max_tokens),
             move |event| match event {
                 crate::api::LlmEvent::Token(t) => Message::StreamToken(stream_id, t),
-                crate::api::LlmEvent::Done => Message::StreamComplete(stream_id),
+                crate::api::LlmEvent::Done(_usage) => Message::StreamComplete(stream_id),
                 crate::api::LlmEvent::Error(e) => Message::StreamError(stream_id, e),
             },
         ).abortable();
@@ -355,12 +378,21 @@ impl ChatApp {
             }
             Message::StreamComplete(id) => {
                 if let Some(stream) = self.active_streams.remove(&id) {
+                    let latency = if stream.first_token_received {
+                        Some(stream.stream_start.elapsed().as_millis() as u64)
+                    } else {
+                        None
+                    };
+                    // Use first-token latency if we recorded it
+                    let ttfb = self.last_latency_ms.map(|ms| ms as u64);
+
                     if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
                         let conv = &mut self.conversations[ci];
                         conv.finalize_at(stream.message_index, &stream.current_response);
                         if let Some(msg) = conv.messages.get_mut(stream.message_index) {
                             let tokens = crate::cost::estimate_tokens(&msg.content);
                             msg.token_count = Some(tokens);
+                            msg.latency_ms = ttfb.or(latency);
                             let cost = crate::cost::message_cost(msg.model.as_deref().unwrap_or(""), &msg.role, tokens);
                             self.session_cost += cost;
                         }
@@ -577,15 +609,6 @@ impl ChatApp {
                 }
                 Task::none()
             }
-            Message::AddTag(tag) => {
-                let conv = &mut self.conversations[self.active_conversation];
-                let tag = tag.trim().to_string();
-                if !tag.is_empty() && !conv.tags.contains(&tag) {
-                    conv.tags.push(tag);
-                    crate::db::set_tags(&self.db, &conv.id, &conv.tags);
-                }
-                Task::none()
-            }
             Message::RemoveTag(tag) => {
                 let conv = &mut self.conversations[self.active_conversation];
                 conv.tags.retain(|t| t != &tag);
@@ -663,6 +686,50 @@ impl ChatApp {
                 let md = crate::export::conversation_to_markdown(conv);
                 iced::clipboard::write(md)
             }
+            // Forking
+            Message::ForkConversation(msg_idx) => {
+                let conv = &self.conversations[self.active_conversation];
+                let forked = conv.fork(msg_idx);
+                crate::db::save_conversation(&self.db, &forked);
+                self.conversations.push(forked);
+                self.active_conversation = self.conversations.len() - 1;
+                self.view = View::Chat;
+                Task::none()
+            }
+            // Per-conversation system prompt
+            Message::ToggleConvSystemPrompt => {
+                self.conv_system_prompt_open = !self.conv_system_prompt_open;
+                if self.conv_system_prompt_open {
+                    self.conv_system_prompt_value = self.conversations[self.active_conversation].system_prompt.clone();
+                }
+                Task::none()
+            }
+            Message::ConvSystemPromptChanged(v) => { self.conv_system_prompt_value = v; Task::none() }
+            Message::SaveConvSystemPrompt => {
+                let conv = &mut self.conversations[self.active_conversation];
+                conv.system_prompt = self.conv_system_prompt_value.trim().to_string();
+                crate::db::save_conversation(&self.db, conv);
+                self.conv_system_prompt_open = false;
+                self.conv_system_prompt_value.clear();
+                Task::none()
+            }
+            // Ratings
+            Message::RateMessage(idx, rating) => {
+                let conv = &mut self.conversations[self.active_conversation];
+                if let Some(msg) = conv.messages.get_mut(idx) {
+                    msg.rating = if msg.rating == rating { 0 } else { rating }; // toggle
+                    let conv_id = conv.id.clone();
+                    let new_rating = msg.rating;
+                    crate::db::update_rating(&self.db, &conv_id, idx, new_rating);
+                }
+                Task::none()
+            }
+            // Analytics
+            Message::ShowAnalytics => {
+                self.view = View::Analytics;
+                self.model_picker_open = false;
+                Task::none()
+            }
             // Ollama
             Message::OllamaModelsDiscovered(models) => {
                 self.config.ollama_models = models;
@@ -699,6 +766,7 @@ impl ChatApp {
                 column![container(chat).height(Length::Fill), input].into()
             }
             View::Settings => ui::settings::view(self),
+            View::Analytics => ui::analytics::view(self),
         };
 
         let sep_v = || container(iced::widget::Space::new()).width(1).height(Length::Fill).style(sep);
@@ -721,23 +789,38 @@ impl ChatApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         iced::event::listen_with(|event, _status, _id| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-                if modifiers.command() {
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) = event {
+                let has_mod = modifiers.command() || modifiers.control();
+
+                if has_mod && modifiers.shift() {
+                    if let keyboard::Key::Named(keyboard::key::Named::Enter) = key {
+                        return Some(Message::SendToAll);
+                    }
+                }
+
+                if has_mod {
+                    // Try logical key first, then physical key as fallback
                     if let keyboard::Key::Character(ref c) = key {
                         match c.as_str() {
                             "n" => return Some(Message::NewConversation),
                             "k" => return Some(Message::ToggleQuickSwitcher),
                             "p" => return Some(Message::ToggleCommandPalette),
                             "e" => return Some(Message::ExportMarkdown),
+                            "," => return Some(Message::ShowSettings),
                             _ => {}
                         }
                     }
-                }
-                if modifiers.command() && modifiers.shift() {
-                    if let keyboard::Key::Named(keyboard::key::Named::Enter) = key {
-                        return Some(Message::SendToAll);
+                    // Physical key fallback for macOS where Cmd+key may not produce Character
+                    match physical_key {
+                        keyboard::key::Physical::Code(keyboard::key::Code::KeyN) => return Some(Message::NewConversation),
+                        keyboard::key::Physical::Code(keyboard::key::Code::KeyK) => return Some(Message::ToggleQuickSwitcher),
+                        keyboard::key::Physical::Code(keyboard::key::Code::KeyP) => return Some(Message::ToggleCommandPalette),
+                        keyboard::key::Physical::Code(keyboard::key::Code::KeyE) => return Some(Message::ExportMarkdown),
+                        keyboard::key::Physical::Code(keyboard::key::Code::Comma) => return Some(Message::ShowSettings),
+                        _ => {}
                     }
                 }
+
                 if let keyboard::Key::Named(keyboard::key::Named::Escape) = key {
                     return Some(Message::CancelRename);
                 }

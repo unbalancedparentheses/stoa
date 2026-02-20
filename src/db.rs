@@ -43,40 +43,52 @@ pub fn open() -> Connection {
     // Migration: add token_count to messages
     conn.execute("ALTER TABLE messages ADD COLUMN token_count INTEGER", []).ok();
 
+    // Migration: system_prompt and forked_from on conversations
+    conn.execute("ALTER TABLE conversations ADD COLUMN system_prompt TEXT DEFAULT ''", []).ok();
+    conn.execute("ALTER TABLE conversations ADD COLUMN forked_from TEXT", []).ok();
+
+    // Migration: rating and latency_ms on messages
+    conn.execute("ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT 0", []).ok();
+    conn.execute("ALTER TABLE messages ADD COLUMN latency_ms INTEGER", []).ok();
+
     migrate_from_json(&conn);
     conn
 }
 
 pub fn load_all(conn: &Connection) -> Vec<Conversation> {
     let mut stmt = conn
-        .prepare("SELECT id, title, COALESCE(tags, ''), COALESCE(pinned, 0) FROM conversations ORDER BY pinned DESC, updated_at DESC, rowid DESC")
+        .prepare("SELECT id, title, COALESCE(tags, ''), COALESCE(pinned, 0), COALESCE(system_prompt, ''), forked_from FROM conversations ORDER BY pinned DESC, updated_at DESC, rowid DESC")
         .expect("failed to prepare query");
 
-    let conv_rows: Vec<(String, String, String, i32)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+    let conv_rows: Vec<(String, String, String, i32, String, Option<String>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
         .expect("failed to query conversations")
         .filter_map(|r| r.ok())
         .collect();
 
     let mut msg_stmt = conn
-        .prepare("SELECT role, content, model, token_count FROM messages WHERE conversation_id = ?1 ORDER BY id")
+        .prepare("SELECT role, content, model, token_count, COALESCE(rating, 0), latency_ms FROM messages WHERE conversation_id = ?1 ORDER BY id")
         .expect("failed to prepare message query");
 
     conv_rows
         .into_iter()
-        .map(|(id, title, tags_str, pinned)| {
+        .map(|(id, title, tags_str, pinned, system_prompt, forked_from)| {
             let messages: Vec<ChatMessage> = msg_stmt
                 .query_map(params![id], |row| {
                     let role_str: String = row.get(0)?;
                     let content: String = row.get(1)?;
                     let model: Option<String> = row.get(2)?;
                     let token_count: Option<u32> = row.get(3)?;
+                    let rating: i8 = row.get::<_, i32>(4)? as i8;
+                    let latency_ms: Option<u64> = row.get(5)?;
                     Ok(ChatMessage {
                         role: if role_str == "user" { Role::User } else { Role::Assistant },
                         content,
                         streaming: false,
                         model,
                         token_count,
+                        rating,
+                        latency_ms,
                     })
                 })
                 .expect("failed to query messages")
@@ -89,15 +101,15 @@ pub fn load_all(conn: &Connection) -> Vec<Conversation> {
                 tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
             };
 
-            Conversation { id, title, messages, tags, pinned: pinned != 0 }
+            Conversation { id, title, messages, tags, pinned: pinned != 0, system_prompt, forked_from }
         })
         .collect()
 }
 
 pub fn save_conversation(conn: &Connection, conv: &Conversation) {
     conn.execute(
-        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32],
+        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, system_prompt, forked_from, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32, conv.system_prompt, conv.forked_from],
     ).ok();
 
     conn.execute(
@@ -106,7 +118,7 @@ pub fn save_conversation(conn: &Connection, conv: &Conversation) {
     ).ok();
 
     let mut stmt = conn
-        .prepare("INSERT INTO messages (conversation_id, role, content, model, token_count) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .prepare("INSERT INTO messages (conversation_id, role, content, model, token_count, rating, latency_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
         .expect("failed to prepare insert");
 
     for msg in &conv.messages {
@@ -117,7 +129,17 @@ pub fn save_conversation(conn: &Connection, conv: &Conversation) {
             Role::User => "user",
             Role::Assistant => "assistant",
         };
-        stmt.execute(params![conv.id, role_str, msg.content, msg.model, msg.token_count]).ok();
+        stmt.execute(params![conv.id, role_str, msg.content, msg.model, msg.token_count, msg.rating as i32, msg.latency_ms]).ok();
+    }
+}
+
+pub fn update_rating(conn: &Connection, conv_id: &str, msg_index: usize, rating: i8) {
+    // Get the message's rowid by position
+    let mut stmt = conn.prepare(
+        "SELECT id FROM messages WHERE conversation_id = ?1 ORDER BY id LIMIT 1 OFFSET ?2"
+    ).expect("rating query failed");
+    if let Ok(msg_id) = stmt.query_row(params![conv_id, msg_index], |row| row.get::<_, i64>(0)) {
+        conn.execute("UPDATE messages SET rating = ?1 WHERE id = ?2", params![rating as i32, msg_id]).ok();
     }
 }
 
