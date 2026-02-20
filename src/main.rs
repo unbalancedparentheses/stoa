@@ -5,7 +5,9 @@ mod cost;
 mod db;
 mod diff;
 mod export;
+mod import;
 mod model;
+mod web_search;
 mod theme;
 mod ui;
 

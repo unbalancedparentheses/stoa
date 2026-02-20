@@ -25,13 +25,26 @@ fn to_openai_messages(
         if m.streaming {
             continue;
         }
-        out.push(serde_json::json!({
-            "role": match m.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-            },
-            "content": m.content,
-        }));
+        let role = match m.role {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        };
+
+        // If message has images, use content array format for vision
+        if !m.images.is_empty() && m.role == Role::User {
+            let mut content_parts = vec![
+                serde_json::json!({"type": "text", "text": m.content}),
+            ];
+            for img_b64 in &m.images {
+                content_parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:image/png;base64,{img_b64}")}
+                }));
+            }
+            out.push(serde_json::json!({"role": role, "content": content_parts}));
+        } else {
+            out.push(serde_json::json!({"role": role, "content": m.content}));
+        }
     }
 
     out
@@ -46,7 +59,8 @@ pub fn stream(
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     Box::pin(async_stream::stream! {
         let is_ollama = config.provider == Provider::Ollama;
-        if !is_ollama && config.api_key.is_empty() {
+        let needs_auth = !is_ollama;
+        if needs_auth && config.api_key.is_empty() {
             yield LlmEvent::Error("API key not set. Go to Settings to configure.".into());
             return;
         }

@@ -17,3 +17,5 @@ async-stream = "0.3"
 pulldown-cmark = "0.12"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rfd = "0.15"
+urlencoding = "2"
+base64 = "0.22"

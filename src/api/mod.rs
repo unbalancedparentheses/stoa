@@ -29,7 +29,7 @@ pub fn stream_completion(
     max_tokens: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     match config.provider {
-        Provider::OpenAI | Provider::Ollama => openai::stream(config, messages, system_prompt, temperature, max_tokens),
+        Provider::OpenAI | Provider::Ollama | Provider::OpenRouter => openai::stream(config, messages, system_prompt, temperature, max_tokens),
         Provider::Anthropic => anthropic::stream(config, messages, system_prompt, temperature, max_tokens),
     }
 }

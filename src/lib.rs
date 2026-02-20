@@ -4,5 +4,7 @@ pub mod cost;
 pub mod db;
 pub mod diff;
 pub mod export;
+pub mod import;
 pub mod model;
+pub mod web_search;
 pub mod theme;

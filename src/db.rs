@@ -38,6 +38,7 @@ fn init_schema(conn: &Connection) {
     conn.execute("ALTER TABLE conversations ADD COLUMN forked_from TEXT", []).ok();
     conn.execute("ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT 0", []).ok();
     conn.execute("ALTER TABLE messages ADD COLUMN latency_ms INTEGER", []).ok();
+    conn.execute("ALTER TABLE conversations ADD COLUMN folder TEXT", []).ok();
 }
 
 pub fn open() -> Connection {
@@ -58,11 +59,11 @@ pub fn open() -> Connection {
 
 pub fn load_all(conn: &Connection) -> Vec<Conversation> {
     let mut stmt = conn
-        .prepare("SELECT id, title, COALESCE(tags, ''), COALESCE(pinned, 0), COALESCE(system_prompt, ''), forked_from FROM conversations ORDER BY pinned DESC, updated_at DESC, rowid DESC")
+        .prepare("SELECT id, title, COALESCE(tags, ''), COALESCE(pinned, 0), COALESCE(system_prompt, ''), forked_from, folder FROM conversations ORDER BY pinned DESC, updated_at DESC, rowid DESC")
         .expect("failed to prepare query");
 
-    let conv_rows: Vec<(String, String, String, i32, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
+    let conv_rows: Vec<(String, String, String, i32, String, Option<String>, Option<String>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))
         .expect("failed to query conversations")
         .filter_map(|r| r.ok())
         .collect();
@@ -73,7 +74,7 @@ pub fn load_all(conn: &Connection) -> Vec<Conversation> {
 
     conv_rows
         .into_iter()
-        .map(|(id, title, tags_str, pinned, system_prompt, forked_from)| {
+        .map(|(id, title, tags_str, pinned, system_prompt, forked_from, folder)| {
             let messages: Vec<ChatMessage> = msg_stmt
                 .query_map(params![id], |row| {
                     let role_str: String = row.get(0)?;
@@ -90,6 +91,7 @@ pub fn load_all(conn: &Connection) -> Vec<Conversation> {
                         token_count,
                         rating,
                         latency_ms,
+                        images: Vec::new(),
                     })
                 })
                 .expect("failed to query messages")
@@ -102,15 +104,15 @@ pub fn load_all(conn: &Connection) -> Vec<Conversation> {
                 tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
             };
 
-            Conversation { id, title, messages, tags, pinned: pinned != 0, system_prompt, forked_from }
+            Conversation { id, title, messages, tags, pinned: pinned != 0, system_prompt, forked_from, folder }
         })
         .collect()
 }
 
 pub fn save_conversation(conn: &Connection, conv: &Conversation) {
     conn.execute(
-        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, system_prompt, forked_from, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
-        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32, conv.system_prompt, conv.forked_from],
+        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, system_prompt, forked_from, folder, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32, conv.system_prompt, conv.forked_from, conv.folder],
     ).ok();
 
     conn.execute(

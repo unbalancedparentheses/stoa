@@ -172,11 +172,42 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         }
     });
 
+    // Image attach button
+    let img_btn = button(
+        container(text("\u{1F5BC}").size(12))
+            .align_x(Alignment::Center)
+            .align_y(iced::alignment::Vertical::Center)
+    ).on_press(Message::AttachImage).width(36).height(36).style(|_: &Theme, status: button::Status| {
+        button::Style {
+            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
+            text_color: TEXT_SEC,
+            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
+            ..Default::default()
+        }
+    });
+
+    // Web search button
+    let search_label = if app.web_search_pending { "\u{2026}" } else { "\u{1F50D}" };
+    let search_btn = button(
+        container(text(search_label).size(12))
+            .align_x(Alignment::Center)
+            .align_y(iced::alignment::Vertical::Center)
+    ).on_press(Message::WebSearch).width(36).height(36).style(|_: &Theme, status: button::Status| {
+        button::Style {
+            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
+            text_color: if app.web_search_context.is_some() { ACCENT } else { TEXT_SEC },
+            border: Border { radius: 18.0.into(), width: 1.0, color: BORDER_DEFAULT },
+            ..Default::default()
+        }
+    });
+
     let mut input_row = row![
         model_chip,
         attach_btn,
+        img_btn,
+        search_btn,
         input,
-    ].spacing(10).align_y(Alignment::Center);
+    ].spacing(6).align_y(Alignment::Center);
 
     // "Run N" button when multiple models selected and not streaming
     if selected_count > 1 && !conv_streaming && !app.input_value.trim().is_empty() {
@@ -193,6 +224,15 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     input_row = input_row.push(action_btn);
 
     let mut content = Column::new();
+
+    // Show attached images indicator
+    if !app.attached_images.is_empty() {
+        content = content.push(
+            container(
+                text(format!("\u{1F5BC} {} image(s) attached", app.attached_images.len())).size(11).color(ACCENT)
+            ).padding(iced::Padding { top: 0.0, right: 28.0, bottom: 4.0, left: 28.0 })
+        );
+    }
 
     // Show attached file indicator
     if let Some(ref filename) = app.attached_filename {

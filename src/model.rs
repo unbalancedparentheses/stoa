@@ -23,6 +23,9 @@ pub struct ChatMessage {
     /// Time to first token in milliseconds
     #[serde(default)]
     pub latency_ms: Option<u64>,
+    /// Base64-encoded images attached to this message
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +41,8 @@ pub struct Conversation {
     pub system_prompt: String,
     #[serde(default)]
     pub forked_from: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,10 +71,10 @@ impl Conversation {
             pinned: false,
             system_prompt: String::new(),
             forked_from: None,
+            folder: None,
         }
     }
 
-    /// Fork this conversation up to (and including) message at `up_to_index`.
     pub fn fork(&self, up_to_index: usize) -> Self {
         let messages: Vec<ChatMessage> = self.messages.iter()
             .take(up_to_index + 1)
@@ -84,6 +89,7 @@ impl Conversation {
             pinned: false,
             system_prompt: self.system_prompt.clone(),
             forked_from: Some(self.id.clone()),
+            folder: self.folder.clone(),
         }
     }
 
@@ -96,6 +102,23 @@ impl Conversation {
             token_count: None,
             rating: 0,
             latency_ms: None,
+            images: Vec::new(),
+        });
+        if self.title == "New Chat" && !content.trim().is_empty() {
+            self.title = content.chars().take(30).collect();
+        }
+    }
+
+    pub fn add_user_message_with_images(&mut self, content: &str, target_model: Option<String>, images: Vec<String>) {
+        self.messages.push(ChatMessage {
+            role: Role::User,
+            content: content.to_string(),
+            streaming: false,
+            model: target_model,
+            token_count: None,
+            rating: 0,
+            latency_ms: None,
+            images,
         });
         if self.title == "New Chat" && !content.trim().is_empty() {
             self.title = content.chars().take(30).collect();
@@ -112,6 +135,7 @@ impl Conversation {
             token_count: None,
             rating: 0,
             latency_ms: None,
+            images: Vec::new(),
         });
         idx
     }
@@ -159,6 +183,15 @@ impl ProviderConfig {
             api_url: "http://localhost:11434/v1/chat/completions".to_string(),
             api_key: String::new(),
             model: "llama3.2".to_string(),
+        }
+    }
+
+    pub fn default_openrouter() -> Self {
+        Self {
+            provider: Provider::OpenRouter,
+            api_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            api_key: String::new(),
+            model: "google/gemini-2.5-flash".to_string(),
         }
     }
 }

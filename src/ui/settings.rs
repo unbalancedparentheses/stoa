@@ -152,8 +152,16 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .padding([10, 16])
         .style(tab_style(config.active_provider == Provider::Ollama));
 
+    let openrouter_btn = button(
+        container(text("OpenRouter").size(13)).width(Length::Fill).align_x(Alignment::Center)
+    )
+        .on_press(Message::SetProvider(Provider::OpenRouter))
+        .width(Length::Fill)
+        .padding([10, 16])
+        .style(tab_style(config.active_provider == Provider::OpenRouter));
+
     let provider_toggle = container(
-        row![openai_btn, anthropic_btn, ollama_btn].spacing(4)
+        row![openai_btn, anthropic_btn, ollama_btn, openrouter_btn].spacing(4)
     )
     .padding(4)
     .width(Length::Fill)
@@ -170,7 +178,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let presets: Vec<&str> = match config.active_provider {
         Provider::OpenAI => vec!["GPT-5", "GPT-4.1", "o3", "o4-mini"],
         Provider::Anthropic => vec!["Opus", "Sonnet", "Haiku"],
-        Provider::Ollama => Vec::new(),
+        Provider::Ollama | Provider::OpenRouter => Vec::new(),
     };
 
     let mut chips = iced::widget::Row::new().spacing(6);
