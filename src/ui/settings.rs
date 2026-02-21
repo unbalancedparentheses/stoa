@@ -303,6 +303,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                     .padding([10, 14])
                     .size(13)
                     .style(field_style),
+                text(spec.description).size(10).color(TEXT_MUTED),
             ]
             .spacing(4)
         );

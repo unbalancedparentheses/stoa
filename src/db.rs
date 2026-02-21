@@ -3,6 +3,7 @@ use rusqlite::{Connection, params};
 use crate::model::{ChatMessage, Conversation, Role};
 
 /// Open an in-memory database for testing.
+#[allow(dead_code)]
 pub fn open_in_memory() -> Connection {
     let conn = Connection::open_in_memory().expect("failed to open in-memory database");
     init_schema(&conn);

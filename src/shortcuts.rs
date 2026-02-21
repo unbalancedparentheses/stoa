@@ -87,6 +87,7 @@ pub fn default_binding(action: ShortcutAction) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub fn docs_binding(action: ShortcutAction) -> String {
     let spec = SPECS.iter().find(|s| s.action == action).expect("missing shortcut spec");
     if spec.default_macos == spec.default_other {
