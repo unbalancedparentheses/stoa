@@ -128,11 +128,11 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         text("Shortcuts").size(12).color(TEXT_HEAD),
         iced::widget::Space::new().height(8),
         row![text("Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send").size(10).color(TEXT_SEC)],
-        row![text("Ctrl+N").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("New chat").size(10).color(TEXT_SEC)],
-        row![text("Ctrl+K").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Quick switch").size(10).color(TEXT_SEC)],
-        row![text("Ctrl+P").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Commands").size(10).color(TEXT_SEC)],
-        row![text("Ctrl+E").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Export MD").size(10).color(TEXT_SEC)],
-        row![text("C+S+Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send all").size(10).color(TEXT_SEC)],
+        row![text("Cmd/Ctrl+N").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("New chat").size(10).color(TEXT_SEC)],
+        row![text("Cmd/Ctrl+K").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Quick switch").size(10).color(TEXT_SEC)],
+        row![text("Cmd/Ctrl+P").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Commands").size(10).color(TEXT_SEC)],
+        row![text("Cmd/Ctrl+E").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Export MD").size(10).color(TEXT_SEC)],
+        row![text("Cmd/Ctrl+Shift+Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send all").size(10).color(TEXT_SEC)],
     ].spacing(6)).padding([12, 20]);
     content_col = content_col.push(shortcuts);
 

@@ -1,5 +1,5 @@
 use iced::widget::{column, container, row};
-use iced::{keyboard, Element, Length, Subscription, Task, Theme, Color};
+use iced::{event, keyboard, Element, Length, Subscription, Task, Theme, Color};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -254,6 +254,7 @@ pub enum Message {
     SetFolder(Option<String>),
     // Misc
     DismissError,
+    NoOp,
 }
 
 impl ChatApp {
@@ -1014,6 +1015,7 @@ impl ChatApp {
                 Task::none()
             }
             Message::DismissError => { self.error_message = None; Task::none() }
+            Message::NoOp => Task::none()
         }
     }
 
@@ -1056,43 +1058,45 @@ impl ChatApp {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen_with(|event, _status, _id| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) = event {
-                let has_mod = modifiers.command() || modifiers.control();
+        // Listen to ALL app events so shortcuts still work while text inputs are focused.
+        event::listen_with(|event, _status, _window| {
+            let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) = event else {
+                return None;
+            };
 
-                if has_mod && modifiers.shift() {
-                    if let keyboard::Key::Named(keyboard::key::Named::Enter) = key {
-                        return Some(Message::SendToAll);
-                    }
-                }
+            let has_mod = modifiers.command() || modifiers.control();
 
-                if has_mod {
-                    // Try logical key first, then physical key as fallback
-                    if let keyboard::Key::Character(ref c) = key {
-                        match c.as_str() {
-                            "n" => return Some(Message::NewConversation),
-                            "k" => return Some(Message::ToggleQuickSwitcher),
-                            "p" => return Some(Message::ToggleCommandPalette),
-                            "e" => return Some(Message::ExportMarkdown),
-                            "," => return Some(Message::ShowSettings),
-                            _ => {}
-                        }
-                    }
-                    // Physical key fallback for macOS where Cmd+key may not produce Character
-                    match physical_key {
-                        keyboard::key::Physical::Code(keyboard::key::Code::KeyN) => return Some(Message::NewConversation),
-                        keyboard::key::Physical::Code(keyboard::key::Code::KeyK) => return Some(Message::ToggleQuickSwitcher),
-                        keyboard::key::Physical::Code(keyboard::key::Code::KeyP) => return Some(Message::ToggleCommandPalette),
-                        keyboard::key::Physical::Code(keyboard::key::Code::KeyE) => return Some(Message::ExportMarkdown),
-                        keyboard::key::Physical::Code(keyboard::key::Code::Comma) => return Some(Message::ShowSettings),
+            if has_mod && modifiers.shift()
+                && matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter))
+            {
+                return Some(Message::SendToAll);
+            }
+
+            if has_mod {
+                if let keyboard::Key::Character(ref c) = key {
+                    match c.to_lowercase().as_str() {
+                        "n" => return Some(Message::NewConversation),
+                        "k" => return Some(Message::ToggleQuickSwitcher),
+                        "p" => return Some(Message::ToggleCommandPalette),
+                        "e" => return Some(Message::ExportMarkdown),
+                        "," => return Some(Message::ShowSettings),
                         _ => {}
                     }
                 }
-
-                if let keyboard::Key::Named(keyboard::key::Named::Escape) = key {
-                    return Some(Message::CancelRename);
+                match physical_key {
+                    keyboard::key::Physical::Code(keyboard::key::Code::KeyN) => return Some(Message::NewConversation),
+                    keyboard::key::Physical::Code(keyboard::key::Code::KeyK) => return Some(Message::ToggleQuickSwitcher),
+                    keyboard::key::Physical::Code(keyboard::key::Code::KeyP) => return Some(Message::ToggleCommandPalette),
+                    keyboard::key::Physical::Code(keyboard::key::Code::KeyE) => return Some(Message::ExportMarkdown),
+                    keyboard::key::Physical::Code(keyboard::key::Code::Comma) => return Some(Message::ShowSettings),
+                    _ => {}
                 }
             }
+
+            if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
+                return Some(Message::CancelRename);
+            }
+
             None
         })
     }
