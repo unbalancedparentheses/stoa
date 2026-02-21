@@ -7,29 +7,29 @@ use crate::theme::*;
 
 fn input_style(_: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
-        background: iced::Background::Color(INPUT_BG),
+        background: iced::Background::Color(INPUT_BG()),
         border: Border {
             radius: 24.0.into(),
             width: 1.0,
             color: match status {
-                text_input::Status::Focused { .. } => ACCENT_DIM,
-                _ => BORDER_DEFAULT,
+                text_input::Status::Focused { .. } => ACCENT_DIM(),
+                _ => BORDER_DEFAULT(),
             },
         },
-        icon: TEXT_MUTED,
-        placeholder: TEXT_MUTED,
-        value: TEXT_HEAD,
-        selection: SELECTION,
+        icon: TEXT_MUTED(),
+        placeholder: TEXT_MUTED(),
+        value: TEXT_HEAD(),
+        selection: SELECTION(),
     }
 }
 
 fn send_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(iced::Background::Color(match status {
-            button::Status::Hovered => ACCENT,
-            _ => ACCENT_DIM,
+            button::Status::Hovered => ACCENT(),
+            _ => ACCENT_DIM(),
         })),
-        text_color: TEXT_HEAD,
+        text_color: TEXT_HEAD(),
         border: Border { radius: 18.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -37,8 +37,8 @@ fn send_style(_: &Theme, status: button::Status) -> button::Style {
 
 fn send_disabled_style(_: &Theme, _: button::Status) -> button::Style {
     button::Style {
-        background: Some(iced::Background::Color(Color::from_rgb8(0x1a, 0x22, 0x2e))),
-        text_color: TEXT_MUTED,
+        background: Some(iced::Background::Color(SEND_DISABLED_BG())),
+        text_color: TEXT_MUTED(),
         border: Border { radius: 18.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -47,10 +47,10 @@ fn send_disabled_style(_: &Theme, _: button::Status) -> button::Style {
 fn stop_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(iced::Background::Color(match status {
-            button::Status::Hovered => DANGER,
-            _ => Color::from_rgb8(0x8a, 0x3a, 0x3a),
+            button::Status::Hovered => DANGER(),
+            _ => STOP_BTN_BG(),
         })),
-        text_color: TEXT_HEAD,
+        text_color: TEXT_HEAD(),
         border: Border { radius: 18.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -59,20 +59,20 @@ fn stop_style(_: &Theme, status: button::Status) -> button::Style {
 fn chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_: &Theme, status: button::Status| {
         let bg = if active {
-            ACCENT_DIM
+            ACCENT_DIM()
         } else {
             match status {
-                button::Status::Hovered => BG_HOVER,
-                _ => BG_ACTIVE,
+                button::Status::Hovered => BG_HOVER(),
+                _ => BG_ACTIVE(),
             }
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color: if active { ACCENT } else { TEXT_SEC },
+            text_color: if active { ACCENT() } else { TEXT_SEC() },
             border: Border {
                 radius: 12.0.into(),
                 width: 1.0,
-                color: if active { ACCENT_DIM } else { BORDER_DEFAULT },
+                color: if active { ACCENT_DIM() } else { BORDER_DEFAULT() },
             },
             ..Default::default()
         }
@@ -82,10 +82,10 @@ fn chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style 
 fn run_n_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(iced::Background::Color(match status {
-            button::Status::Hovered => Color::from_rgb8(0x2a, 0x7a, 0x5a),
-            _ => Color::from_rgb8(0x1e, 0x5a, 0x42),
+            button::Status::Hovered => RUN_N_HOVER(),
+            _ => RUN_N_BG(),
         })),
-        text_color: TEXT_HEAD,
+        text_color: TEXT_HEAD(),
         border: Border { radius: 18.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -114,7 +114,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .on_input(Message::InputChanged)
         .on_submit(Message::SendMessage)
         .padding([12, 20])
-        .size(14)
+        .size(FONT_BODY)
         .style(input_style);
 
     let conv_streaming = app.is_active_conv_streaming();
@@ -124,7 +124,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let action_btn: Element<'_, Message> = if conv_streaming {
         let label = if conv_stream_count > 1 { "Stop All" } else { "\u{25A0}" };
         button(
-            container(text(label).size(if conv_stream_count > 1 { 11 } else { 14 }))
+            container(text(label).size(if conv_stream_count > 1 { FONT_SMALL } else { FONT_BODY }))
                 .align_x(Alignment::Center)
                 .align_y(iced::alignment::Vertical::Center)
         ).on_press(Message::StopStreaming).width(if conv_stream_count > 1 { 72 } else { 36 }).height(36).style(stop_style).into()
@@ -132,13 +132,13 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let can_send = !app.input_value.trim().is_empty();
         if can_send {
             button(
-                container(text("\u{2191}").size(14))
+                container(text("\u{2191}").size(FONT_BODY))
                     .align_x(Alignment::Center)
                     .align_y(iced::alignment::Vertical::Center)
             ).on_press(Message::SendMessage).width(36).height(36).style(send_style).into()
         } else {
             button(
-                container(text("\u{2191}").size(14))
+                container(text("\u{2191}").size(FONT_BODY))
                     .align_x(Alignment::Center)
                     .align_y(iced::alignment::Vertical::Center)
             ).width(36).height(36).style(send_disabled_style).into()
@@ -149,7 +149,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let icon = provider_icon(&app.selected_model);
     let name = short_model_name(&app.selected_model);
     let model_chip = button(
-        text(format!("{icon} {name}")).size(11)
+        text(format!("{icon} {name}")).size(FONT_SMALL)
     )
     .on_press(Message::ToggleModelPicker)
     .padding([4, 10])
@@ -157,25 +157,25 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
     // Toolbar: compact attach/image/search buttons
     let toolbar_btn = |label: &'static str, msg: Message| -> Element<'_, Message> {
-        button(text(label).size(11))
+        button(text(label).size(FONT_SMALL))
             .on_press(msg)
             .padding([4, 8])
             .style(|_: &Theme, status: button::Status| button::Style {
                 background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                text_color: match status { button::Status::Hovered => TEXT_HEAD, _ => TEXT_MUTED },
+                text_color: match status { button::Status::Hovered => TEXT_HEAD(), _ => TEXT_MUTED() },
                 ..Default::default()
             })
             .into()
     };
 
-    let search_color = if app.web_search_context.is_some() || app.web_search_pending { ACCENT } else { TEXT_MUTED };
+    let search_color = if app.web_search_context.is_some() || app.web_search_pending { ACCENT() } else { TEXT_MUTED() };
     let search_icon = if app.web_search_pending { "\u{2026}" } else { "\u{2315}" };
-    let search_btn: Element<'_, Message> = button(text(search_icon).size(11).color(search_color))
+    let search_btn: Element<'_, Message> = button(text(search_icon).size(FONT_SMALL).color(search_color))
         .on_press(Message::WebSearch)
         .padding([4, 8])
         .style(|_: &Theme, status: button::Status| button::Style {
             background: Some(iced::Background::Color(Color::TRANSPARENT)),
-            text_color: match status { button::Status::Hovered => TEXT_HEAD, _ => TEXT_MUTED },
+            text_color: match status { button::Status::Hovered => TEXT_HEAD(), _ => TEXT_MUTED() },
             ..Default::default()
         })
         .into();
@@ -197,7 +197,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let models: Vec<String> = app.selected_models.iter().cloned().collect();
         input_row = input_row.push(
             button(
-                container(text(format!("Run {selected_count}")).size(11))
+                container(text(format!("Run {selected_count}")).size(FONT_SMALL))
                     .align_x(Alignment::Center)
                     .align_y(iced::alignment::Vertical::Center)
             ).on_press(Message::SendToModels(models)).width(64).height(36).style(run_n_style)
@@ -212,7 +212,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     if !app.attached_images.is_empty() {
         content = content.push(
             container(
-                text(format!("\u{1F5BC} {} image(s) attached", app.attached_images.len())).size(11).color(ACCENT)
+                text(format!("\u{1F5BC} {} image(s) attached", app.attached_images.len())).size(FONT_SMALL).color(ACCENT())
             ).padding(iced::Padding { top: 0.0, right: 28.0, bottom: 4.0, left: 28.0 })
         );
     }
@@ -222,9 +222,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         content = content.push(
             container(
                 row![
-                    text(format!("\u{1F4CE} {filename}")).size(11).color(ACCENT),
+                    text(format!("\u{1F4CE} {filename}")).size(FONT_SMALL).color(ACCENT()),
                     iced::widget::Space::new().width(8),
-                    text(format!("({} chars)", app.attached_file.as_ref().map(|f| f.len()).unwrap_or(0))).size(10).color(TEXT_MUTED),
+                    text(format!("({} chars)", app.attached_file.as_ref().map(|f| f.len()).unwrap_or(0))).size(FONT_CAPTION).color(TEXT_MUTED()),
                 ].align_y(Alignment::Center)
             ).padding(iced::Padding { top: 0.0, right: 28.0, bottom: 4.0, left: 28.0 })
         );
@@ -241,7 +241,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
             // Left part: checkbox for multi-select
             picker_row = picker_row.push(
-                button(text(format!("{check} {icon} {display}")).size(11))
+                button(text(format!("{check} {icon} {display}")).size(FONT_SMALL))
                     .on_press(Message::ToggleModelSelection(model_id.to_string()))
                     .padding([4, 10])
                     .style(chip_style(is_current || is_selected_multi))
@@ -249,7 +249,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         }
         // "Run All" chip
         picker_row = picker_row.push(
-            button(text("Run All").size(11))
+            button(text("Run All").size(FONT_SMALL))
                 .on_press(Message::SendToAll)
                 .padding([4, 10])
                 .style(run_n_style)
@@ -261,12 +261,12 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
         // Second row: single-click to set primary model
         let mut select_row = iced::widget::Row::new().spacing(6);
-        select_row = select_row.push(text("Primary:").size(10).color(TEXT_MUTED));
+        select_row = select_row.push(text("Primary:").size(FONT_CAPTION).color(TEXT_MUTED()));
         for (display, model_id) in AppConfig::available_models() {
             let is_current = model_id == app.selected_model;
             let icon = provider_icon(model_id);
             select_row = select_row.push(
-                button(text(format!("{icon} {display}")).size(10))
+                button(text(format!("{icon} {display}")).size(FONT_CAPTION))
                     .on_press(Message::SelectModel(model_id.to_string()))
                     .padding([3, 8])
                     .style(chip_style(is_current))
@@ -284,7 +284,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .width(Length::Fill)
         .padding(iced::Padding { top: 12.0, right: 28.0, bottom: 20.0, left: 28.0 })
         .style(|_: &Theme| container::Style {
-            background: Some(iced::Background::Color(MAIN_BG)),
+            background: Some(iced::Background::Color(MAIN_BG())),
             ..Default::default()
         })
         .into()

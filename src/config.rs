@@ -3,10 +3,11 @@ use std::collections::HashMap;
 
 use crate::model::{Provider, ProviderConfig};
 use crate::shortcuts::{self, ShortcutAction};
+use crate::theme::ThemeName;
 
 const KEYCHAIN_SERVICE: &str = "stoa";
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -33,6 +34,8 @@ pub struct AppConfig {
     pub keybindings: Keybindings,
     #[serde(default)]
     pub debug_key_events: bool,
+    #[serde(default)]
+    pub theme: ThemeName,
 }
 
 fn default_temperature() -> String { "0.7".to_string() }
@@ -145,6 +148,7 @@ impl Default for AppConfig {
             ollama_models: Vec::new(),
             keybindings: Keybindings::default(),
             debug_key_events: false,
+            theme: ThemeName::default(),
         }
     }
 }
@@ -243,6 +247,10 @@ impl AppConfig {
         // v1 -> v2: keybindings/debug fields were added; serde defaults already fill missing values.
         if self.schema_version < 2 {
             self.schema_version = 2;
+        }
+        // v2 -> v3: theme field added; serde default fills it.
+        if self.schema_version < 3 {
+            self.schema_version = 3;
         }
         if self.schema_version > CONFIG_SCHEMA_VERSION {
             self.schema_version = CONFIG_SCHEMA_VERSION;

@@ -6,11 +6,11 @@ use crate::theme::*;
 
 fn code_block_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CODE_BG)),
+        background: Some(iced::Background::Color(CODE_BG())),
         border: Border {
             radius: 0.0.into(),
             width: 1.0,
-            color: BORDER_SUBTLE,
+            color: BORDER_SUBTLE(),
         },
         ..Default::default()
     }
@@ -18,11 +18,11 @@ fn code_block_style(_: &Theme) -> container::Style {
 
 fn code_header_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
+        background: Some(iced::Background::Color(CARD_BG())),
         border: Border {
             radius: 6.0.into(),
             width: 1.0,
-            color: BORDER_SUBTLE,
+            color: BORDER_SUBTLE(),
         },
         ..Default::default()
     }
@@ -32,8 +32,8 @@ fn copy_btn_style(_: &Theme, status: iced::widget::button::Status) -> iced::widg
     iced::widget::button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: match status {
-            iced::widget::button::Status::Hovered => ACCENT,
-            _ => TEXT_MUTED,
+            iced::widget::button::Status::Hovered => ACCENT(),
+            _ => TEXT_MUTED(),
         },
         ..Default::default()
     }
@@ -41,7 +41,7 @@ fn copy_btn_style(_: &Theme, status: iced::widget::button::Status) -> iced::widg
 
 fn blockquote_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
+        background: Some(iced::Background::Color(CARD_BG())),
         border: Border {
             radius: 4.0.into(),
             ..Default::default()
@@ -93,11 +93,11 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
             return;
         }
         let size = match heading {
-            Some(HeadingLevel::H1) => 24.0,
-            Some(HeadingLevel::H2) => 20.0,
-            Some(HeadingLevel::H3) => 18.0,
-            Some(HeadingLevel::H4) => 16.0,
-            _ => 14.0,
+            Some(HeadingLevel::H1) => FONT_MD_H1,
+            Some(HeadingLevel::H2) => FONT_MD_H2,
+            Some(HeadingLevel::H3) => FONT_MD_H3,
+            Some(HeadingLevel::H4) => FONT_MD_H4,
+            _ => FONT_BODY,
         };
         let drained: Vec<_> = std::mem::take(spans);
         elements.push(rich_text(drained).size(size).into());
@@ -178,9 +178,9 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
                 let code_for_copy = code.clone();
                 let header = container(
                     row![
-                        text(lang_label).size(11).color(TEXT_MUTED).font(Font::MONOSPACE),
+                        text(lang_label).size(FONT_MICRO).color(TEXT_MUTED()).font(Font::MONOSPACE),
                         iced::widget::Space::new().width(Length::Fill),
-                        button(text("Copy").size(11))
+                        button(text("Copy").size(FONT_MICRO))
                             .padding([2, 8])
                             .style(copy_btn_style)
                             .on_press(Message::CopyToClipboard(code_for_copy)),
@@ -193,8 +193,8 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
                 let body = container(
                     text(code)
                         .font(Font::MONOSPACE)
-                        .size(13)
-                        .color(TEXT_BODY),
+                        .size(FONT_SMALL)
+                        .color(TEXT_BODY()),
                 )
                 .padding([12, 16])
                 .width(Length::Fill)
@@ -211,7 +211,7 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
             Event::Code(code) => {
                 let s = span(code.into_string())
                     .font(Font::MONOSPACE)
-                    .color(ACCENT);
+                    .color(ACCENT());
                 spans.push(s);
             }
             Event::Text(t) => {
@@ -219,9 +219,9 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
                     code_block_content.push_str(&t);
                 } else {
                     let color = if heading_level.is_some() {
-                        TEXT_HEAD
+                        TEXT_HEAD()
                     } else {
-                        TEXT_BODY
+                        TEXT_BODY()
                     };
                     let mut s = span(t.into_string())
                         .color(color)
@@ -246,7 +246,7 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
                         .width(Length::Fill)
                         .height(1)
                         .style(|_: &Theme| container::Style {
-                            background: Some(iced::Background::Color(BORDER_DEFAULT)),
+                            background: Some(iced::Background::Color(BORDER_DEFAULT())),
                             ..Default::default()
                         })
                         .into()
@@ -272,7 +272,7 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
                     }
                     _ => "\u{2022} ".to_string(),
                 };
-                spans.push(span(prefix).color(TEXT_MUTED));
+                spans.push(span(prefix).color(TEXT_MUTED()));
             }
             Event::End(TagEnd::Item) => {
                 let target = if in_blockquote { &mut blockquote_elements } else { &mut elements };
@@ -291,7 +291,7 @@ pub fn render_markdown(content: &str) -> Element<'static, Message> {
     flush_spans(&mut spans, target, heading_level);
 
     if elements.is_empty() {
-        return text(content.to_string()).size(14).line_height(1.7).color(TEXT_BODY).into();
+        return text(content.to_string()).size(FONT_BODY).line_height(1.7).color(TEXT_BODY()).into();
     }
 
     Column::with_children(elements).spacing(8).into()

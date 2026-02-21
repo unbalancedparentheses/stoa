@@ -6,30 +6,30 @@ use crate::theme::*;
 
 fn card_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE },
+        background: Some(iced::Background::Color(CARD_BG())),
+        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE() },
         ..Default::default()
     }
 }
 
 fn stat_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
     row![
-        text(label).size(12).color(TEXT_SEC),
+        text(label).size(FONT_CAPTION).color(TEXT_SEC()),
         iced::widget::Space::new().width(Length::Fill),
-        text(value).size(12).color(TEXT_HEAD).font(iced::Font::MONOSPACE),
+        text(value).size(FONT_CAPTION).color(TEXT_HEAD()).font(iced::Font::MONOSPACE),
     ].align_y(Alignment::Center).into()
 }
 
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let header = container(
-        row![text("Diagnostics").size(15).color(TEXT_HEAD)].align_y(Alignment::Center)
+        row![text("Diagnostics").size(FONT_H1).color(TEXT_HEAD())].align_y(Alignment::Center)
     ).width(Length::Fill).padding([14, 28]).style(|_: &Theme| container::Style {
-        background: Some(iced::Background::Color(HEADER_BG)),
+        background: Some(iced::Background::Color(HEADER_BG())),
         ..Default::default()
     });
 
     let focus = container(column![
-        text("Focus State").size(13).color(TEXT_HEAD),
+        text("Focus State").size(FONT_SMALL).color(TEXT_HEAD()),
         iced::widget::Space::new().height(8),
         stat_row("Startup focus attempts", app.startup_focus_attempts.to_string()),
         stat_row("Startup focus successes", app.startup_focus_successes.to_string()),
@@ -41,7 +41,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         .unwrap_or_else(|| "<unavailable>".to_string());
 
     let keyboard = container(column![
-        text("Keyboard State").size(13).color(TEXT_HEAD),
+        text("Keyboard State").size(FONT_SMALL).color(TEXT_HEAD()),
         iced::widget::Space::new().height(8),
         stat_row("Debug key log", if app.config.debug_key_events { "enabled".into() } else { "disabled".into() }),
         stat_row("Key log path", key_log_path),
@@ -52,7 +52,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     ].spacing(6)).padding(16).width(Length::Fill).style(card_style);
 
     let mut bindings_col = column![
-        text("Active Keybindings").size(13).color(TEXT_HEAD),
+        text("Active Keybindings").size(FONT_SMALL).color(TEXT_HEAD()),
         iced::widget::Space::new().height(8),
     ].spacing(6);
     for spec in crate::shortcuts::specs() {
@@ -62,16 +62,16 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     }
     let bindings = container(bindings_col).padding(16).width(Length::Fill).style(card_style);
 
-    let run = button(text("Run Diagnostics").size(12))
+    let run = button(text("Run Diagnostics").size(FONT_CAPTION))
         .on_press(Message::RunDiagnostics)
         .padding([8, 14])
         .style(|_: &Theme, status: button::Status| button::Style {
             background: Some(iced::Background::Color(match status {
-                button::Status::Hovered => BG_HOVER,
-                _ => BG_ACTIVE,
+                button::Status::Hovered => BG_HOVER(),
+                _ => BG_ACTIVE(),
             })),
-            text_color: TEXT_HEAD,
-            border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_DEFAULT },
+            text_color: TEXT_HEAD(),
+            border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_DEFAULT() },
             ..Default::default()
         });
 
@@ -83,8 +83,8 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                 .map(|s| format!("Last run: {s}"))
                 .unwrap_or_else(|| "Not run yet this session.".to_string())
         )
-        .size(11)
-        .color(TEXT_MUTED),
+        .size(FONT_MICRO)
+        .color(TEXT_MUTED()),
     ].spacing(8)).padding(16).width(Length::Fill).style(card_style);
 
     let body = column![run_card, focus, keyboard, bindings]
@@ -95,9 +95,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     column![
         header,
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(BORDER_SUBTLE)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(BORDER_SUBTLE())), ..Default::default() }),
         container(scrollable(container(body).width(Length::Fill)))
             .width(Length::Fill).height(Length::Fill)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG())), ..Default::default() }),
     ].into()
 }

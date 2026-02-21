@@ -1,11 +1,12 @@
 use iced::widget::{column, container, row};
-use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme, Color};
+use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::config::AppConfig;
 use crate::model::{Conversation, Provider};
+use crate::theme::ThemeName;
 use crate::ui;
 
 pub type StreamId = usize;
@@ -207,11 +208,14 @@ pub enum Message {
     SetKeybinding(crate::shortcuts::ShortcutAction, String),
     ResetKeybindings,
     SetDebugKeyEvents(bool),
+    SetTheme(ThemeName),
     KeyboardPressed(keyboard::Key, keyboard::key::Physical, keyboard::Modifiers),
 }
 
 impl ChatApp {
     fn from_parts(config: AppConfig, db: Connection, conversations: Vec<Conversation>) -> Self {
+        crate::theme::set_theme(config.theme);
+
         let conversations = if conversations.is_empty() {
             let c = Conversation::new();
             let _ = crate::db::save_conversation(&db, &c);
@@ -407,17 +411,7 @@ impl ChatApp {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::custom(
-            "Stoa".to_string(),
-            iced::theme::Palette {
-                background: Color::from_rgb8(0x10, 0x12, 0x18),
-                text: Color::from_rgb8(0xec, 0xed, 0xf0),
-                primary: Color::from_rgb8(0x6e, 0xa0, 0xd4),
-                success: Color::from_rgb8(0x50, 0xc0, 0x8a),
-                warning: Color::from_rgb8(0xd0, 0xa0, 0x50),
-                danger: Color::from_rgb8(0xe0, 0x60, 0x60),
-            },
-        )
+        Theme::custom("Stoa".to_string(), self.config.theme.iced_palette())
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -969,6 +963,12 @@ impl ChatApp {
                 self.config_saved = false;
                 Task::none()
             }
+            Message::SetTheme(name) => {
+                self.config.theme = name;
+                crate::theme::set_theme(name);
+                self.config_saved = false;
+                Task::none()
+            }
         }
     }
 
@@ -978,7 +978,7 @@ impl ChatApp {
         let bottom_bar = ui::bottom_bar::view(self);
 
         let sep = |_: &Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x1e, 0x28, 0x34))),
+            background: Some(iced::Background::Color(crate::theme::SEPARATOR())),
             ..Default::default()
         };
 

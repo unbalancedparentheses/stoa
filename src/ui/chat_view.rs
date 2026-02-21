@@ -10,7 +10,7 @@ use crate::ui::markdown;
 
 fn user_bubble(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(USER_BG)),
+        background: Some(iced::Background::Color(USER_BG())),
         border: Border { radius: 12.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -18,8 +18,8 @@ fn user_bubble(_: &Theme) -> container::Style {
 
 fn special_user_bubble(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(USER_BG)),
-        border: Border { radius: 12.0.into(), width: 1.0, color: ACCENT_DIM },
+        background: Some(iced::Background::Color(USER_BG())),
+        border: Border { radius: 12.0.into(), width: 1.0, color: ACCENT_DIM() },
         ..Default::default()
     }
 }
@@ -27,15 +27,15 @@ fn special_user_bubble(_: &Theme) -> container::Style {
 fn action_btn_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
-        text_color: match status { button::Status::Hovered => TEXT_SEC, _ => TEXT_MUTED },
+        text_color: match status { button::Status::Hovered => TEXT_SEC(), _ => TEXT_MUTED() },
         ..Default::default()
     }
 }
 
 fn review_btn_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => Color::TRANSPARENT })),
-        text_color: match status { button::Status::Hovered => ACCENT, _ => TEXT_MUTED },
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER(), _ => Color::TRANSPARENT })),
+        text_color: match status { button::Status::Hovered => ACCENT(), _ => TEXT_MUTED() },
         border: Border { radius: 4.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -43,17 +43,17 @@ fn review_btn_style(_: &Theme, status: button::Status) -> button::Style {
 
 fn review_chip_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT_DIM, _ => BG_ACTIVE })),
-        text_color: match status { button::Status::Hovered => ACCENT, _ => TEXT_SEC },
-        border: Border { radius: 10.0.into(), width: 1.0, color: BORDER_DEFAULT },
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT_DIM(), _ => BG_ACTIVE() })),
+        text_color: match status { button::Status::Hovered => ACCENT(), _ => TEXT_SEC() },
+        border: Border { radius: 10.0.into(), width: 1.0, color: BORDER_DEFAULT() },
         ..Default::default()
     }
 }
 
 fn stop_stream_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        background: Some(iced::Background::Color(match status { button::Status::Hovered => DANGER, _ => Color::from_rgb8(0x8a, 0x3a, 0x3a) })),
-        text_color: TEXT_HEAD,
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => DANGER(), _ => STOP_BTN_BG() })),
+        text_color: TEXT_HEAD(),
         border: Border { radius: 10.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -61,24 +61,24 @@ fn stop_stream_style(_: &Theme, status: button::Status) -> button::Style {
 
 fn diff_btn_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT_DIM, _ => BG_ACTIVE })),
-        text_color: match status { button::Status::Hovered => ACCENT, _ => TEXT_SEC },
-        border: Border { radius: 10.0.into(), width: 1.0, color: BORDER_DEFAULT },
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT_DIM(), _ => BG_ACTIVE() })),
+        text_color: match status { button::Status::Hovered => ACCENT(), _ => TEXT_SEC() },
+        border: Border { radius: 10.0.into(), width: 1.0, color: BORDER_DEFAULT() },
         ..Default::default()
     }
 }
 
 fn comparison_col_style(_: &Theme) -> container::Style {
     container::Style {
-        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE },
+        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE() },
         ..Default::default()
     }
 }
 
 fn error_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(ERROR_BG)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: ERROR_BORDER },
+        background: Some(iced::Background::Color(ERROR_BG())),
+        border: Border { radius: 8.0.into(), width: 1.0, color: ERROR_BORDER() },
         ..Default::default()
     }
 }
@@ -134,49 +134,50 @@ fn render_assistant_message<'a>(
             Some(m) => { let icon = provider_icon(m); let name = short_model_name(m); format!("{icon} {name}") }
             None => format!("({}) reading {msg_count} messages", short_model_name(&app.selected_model)),
         };
-        col = col.push(text(model_label).size(11).color(TEXT_MUTED));
+        col = col.push(text(model_label).size(FONT_MICRO).color(TEXT_MUTED()));
     }
 
     if msg.streaming {
         if msg.content.is_empty() {
-            col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
+            col = col.push(text("\u{2022}\u{2022}\u{2022}").size(FONT_BODY).color(ACCENT()));
         } else {
             col = col.push(markdown::render_markdown(&msg.content));
-            col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
+            col = col.push(text("\u{2022}\u{2022}\u{2022}").size(FONT_BODY).color(ACCENT()));
         }
         if let Some((&stream_id, _)) = app.active_streams.iter().find(|(_, s)| s.message_index == i) {
-            col = col.push(button(text("Stop").size(10)).padding([3, 8]).on_press(Message::StopStream(stream_id)).style(stop_stream_style));
+            col = col.push(button(text("Stop").size(FONT_CAPTION)).padding([3, 8]).on_press(Message::StopStream(stream_id)).style(stop_stream_style));
         }
     } else {
-        // Lazy-render finalized markdown: only re-parses when content changes
-        col = col.push(iced::widget::lazy(msg.content.clone(), |content: &String| {
+        // Lazy-render finalized markdown: only re-parses when content or theme changes
+        let theme = app.config.theme;
+        col = col.push(iced::widget::lazy((msg.content.clone(), theme), |(content, _): &(String, ThemeName)| {
             markdown::render_markdown(content)
         }));
     }
 
     if !msg.streaming {
         // Thumbs up/down + action buttons
-        let up_color = if msg.rating > 0 { SUCCESS } else { TEXT_MUTED };
-        let down_color = if msg.rating < 0 { DANGER } else { TEXT_MUTED };
+        let up_color = if msg.rating > 0 { SUCCESS() } else { TEXT_MUTED() };
+        let down_color = if msg.rating < 0 { DANGER() } else { TEXT_MUTED() };
 
         let mut actions = row![
-            button(text("\u{25B2}").size(11).color(up_color)).padding([2, 5])
+            button(text("\u{25B2}").size(FONT_SMALL).color(up_color)).padding([2, 5])
                 .style(action_btn_style).on_press(Message::RateMessage(i, 1)),
-            button(text("\u{25BC}").size(11).color(down_color)).padding([2, 5])
+            button(text("\u{25BC}").size(FONT_SMALL).color(down_color)).padding([2, 5])
                 .style(action_btn_style).on_press(Message::RateMessage(i, -1)),
-            button(text("\u{2398}").size(12)).padding([2, 6]).style(action_btn_style)
+            button(text("\u{2398}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style)
                 .on_press(Message::CopyToClipboard(msg.content.clone())),
-            button(text("\u{2442}").size(12)).padding([2, 6]).style(action_btn_style)
+            button(text("\u{2442}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style)
                 .on_press(Message::ForkConversation(i)),
         ].spacing(4);
 
         if last_assistant_idx == Some(i) && !is_streaming {
-            actions = actions.push(button(text("\u{21BB}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::RetryMessage));
+            actions = actions.push(button(text("\u{21BB}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style).on_press(Message::RetryMessage));
         }
         if !is_streaming && !compact {
-            actions = actions.push(button(text("Review").size(11)).padding([2, 8]).style(review_btn_style).on_press(Message::ShowReviewPicker(i)));
+            actions = actions.push(button(text("Review").size(FONT_SMALL)).padding([2, 8]).style(review_btn_style).on_press(Message::ShowReviewPicker(i)));
         }
-        actions = actions.push(button(text("\u{00D7}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::DeleteMessage(i)));
+        actions = actions.push(button(text("\u{00D7}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style).on_press(Message::DeleteMessage(i)));
         col = col.push(actions);
 
         // Cost + latency info line
@@ -193,20 +194,20 @@ fn render_assistant_message<'a>(
             info_parts.push(format!("{lat} ms"));
         }
         if !info_parts.is_empty() {
-            col = col.push(text(info_parts.join(" \u{00B7} ")).size(9).color(TEXT_MUTED));
+            col = col.push(text(info_parts.join(" \u{00B7} ")).size(FONT_MICRO).color(TEXT_MUTED()));
         }
 
         // Review picker (only in non-compact mode)
         if !compact && app.review_picker == Some(i) {
             let current_model = msg.model.as_deref().unwrap_or("");
             let mut picker = iced::widget::Row::new().spacing(6);
-            picker = picker.push(text("Review with:").size(11).color(TEXT_MUTED));
+            picker = picker.push(text("Review with:").size(FONT_SMALL).color(TEXT_MUTED()));
             for (display, model_id) in AppConfig::available_models() {
                 if model_id == current_model { continue; }
                 let icon = provider_icon(model_id);
-                picker = picker.push(button(text(format!("{icon} {display}")).size(10)).on_press(Message::ReviewWith(model_id.to_string())).padding([3, 8]).style(review_chip_style));
+                picker = picker.push(button(text(format!("{icon} {display}")).size(FONT_CAPTION)).on_press(Message::ReviewWith(model_id.to_string())).padding([3, 8]).style(review_chip_style));
             }
-            picker = picker.push(button(text("\u{00D7}").size(11)).padding([2, 6]).style(action_btn_style).on_press(Message::DismissReviewPicker));
+            picker = picker.push(button(text("\u{00D7}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style).on_press(Message::DismissReviewPicker));
             col = col.push(container(picker).padding([4, 0]));
         }
     }
@@ -230,13 +231,13 @@ fn render_diff_panel<'a>(app: &'a ChatApp) -> Option<Element<'a, Message>> {
     for seg in &segments {
         match seg {
             crate::diff::DiffSegment::Common(t) => {
-                spans_vec.push(span(format!("{t} ")).color(TEXT_BODY).size(13));
+                spans_vec.push(span(format!("{t} ")).color(TEXT_BODY()).size(FONT_BODY));
             }
             crate::diff::DiffSegment::OnlyA(t) => {
-                spans_vec.push(span(format!("[{t}] ")).color(DIFF_A_TEXT).size(13));
+                spans_vec.push(span(format!("[{t}] ")).color(DIFF_A_TEXT()).size(FONT_BODY));
             }
             crate::diff::DiffSegment::OnlyB(t) => {
-                spans_vec.push(span(format!("[{t}] ")).color(DIFF_B_TEXT).size(13));
+                spans_vec.push(span(format!("[{t}] ")).color(DIFF_B_TEXT()).size(FONT_BODY));
             }
         }
     }
@@ -244,26 +245,26 @@ fn render_diff_panel<'a>(app: &'a ChatApp) -> Option<Element<'a, Message>> {
     let diff_text = rich_text(spans_vec).wrapping(iced::widget::text::Wrapping::Word);
 
     let header = row![
-        text(format!("Diff: {model_a} vs {model_b}")).size(12).color(TEXT_HEAD),
+        text(format!("Diff: {model_a} vs {model_b}")).size(FONT_SMALL).color(TEXT_HEAD()),
         iced::widget::Space::new().width(12),
-        text(format!("{:.0}% agreement", agreement)).size(11).color(ACCENT),
+        text(format!("{:.0}% agreement", agreement)).size(FONT_SMALL).color(ACCENT()),
         iced::widget::Space::new().width(Length::Fill),
         container(
             row![
-                text(format!("{model_a} only")).size(10).color(DIFF_A_TEXT),
+                text(format!("{model_a} only")).size(FONT_CAPTION).color(DIFF_A_TEXT()),
                 iced::widget::Space::new().width(12),
-                text(format!("{model_b} only")).size(10).color(DIFF_B_TEXT),
+                text(format!("{model_b} only")).size(FONT_CAPTION).color(DIFF_B_TEXT()),
             ].spacing(4)
         ),
         iced::widget::Space::new().width(12),
-        button(text("\u{00D7}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::DismissDiff),
+        button(text("\u{00D7}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style).on_press(Message::DismissDiff),
     ].align_y(Alignment::Center);
 
     let panel = container(
         column![header, diff_text].spacing(8)
     ).padding([12, 16]).width(Length::Fill).style(|_: &Theme| container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_DEFAULT },
+        background: Some(iced::Background::Color(CARD_BG())),
+        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_DEFAULT() },
         ..Default::default()
     });
 
@@ -276,36 +277,36 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
     // Header
     let compare_label = if app.comparison_mode { "Stack" } else { "Compare" };
-    let compare_btn = button(text(compare_label).size(11))
+    let compare_btn = button(text(compare_label).size(FONT_SMALL))
         .on_press(Message::ToggleComparisonMode)
         .padding([4, 10])
         .style(|_: &Theme, status: button::Status| button::Style {
-            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
-            text_color: if app.comparison_mode { ACCENT } else { TEXT_SEC },
-            border: Border { radius: 10.0.into(), width: 1.0, color: if app.comparison_mode { ACCENT_DIM } else { BORDER_DEFAULT } },
+            background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER(), _ => BG_ACTIVE() })),
+            text_color: if app.comparison_mode { ACCENT() } else { TEXT_SEC() },
+            border: Border { radius: 10.0.into(), width: 1.0, color: if app.comparison_mode { ACCENT_DIM() } else { BORDER_DEFAULT() } },
             ..Default::default()
         });
 
     let has_sys_prompt = !conv.system_prompt.is_empty();
     let sys_prompt_btn = button(
-        text(if has_sys_prompt { "Sys \u{2713}" } else { "Sys" }).size(11)
+        text(if has_sys_prompt { "Sys \u{2713}" } else { "Sys" }).size(FONT_SMALL)
     ).on_press(Message::ToggleConvSystemPrompt).padding([4, 10]).style(move |_: &Theme, status: button::Status| button::Style {
-        background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER, _ => BG_ACTIVE })),
-        text_color: if has_sys_prompt { SUCCESS } else { TEXT_SEC },
-        border: Border { radius: 10.0.into(), width: 1.0, color: if has_sys_prompt { Color::from_rgb8(0x24, 0x50, 0x3a) } else { BORDER_DEFAULT } },
+        background: Some(iced::Background::Color(match status { button::Status::Hovered => BG_HOVER(), _ => BG_ACTIVE() })),
+        text_color: if has_sys_prompt { SUCCESS() } else { TEXT_SEC() },
+        border: Border { radius: 10.0.into(), width: 1.0, color: if has_sys_prompt { SAVED_BORDER() } else { BORDER_DEFAULT() } },
         ..Default::default()
     });
 
     let chat_header = container(
         row![
-            text("Home").size(15).color(TEXT_HEAD),
+            text("Home").size(FONT_H1).color(TEXT_HEAD()),
             iced::widget::Space::new().width(Length::Fill),
             sys_prompt_btn,
             iced::widget::Space::new().width(8),
             compare_btn,
         ].align_y(Alignment::Center)
     ).width(Length::Fill).padding([14, 28]).style(|_: &Theme| container::Style {
-        background: Some(iced::Background::Color(HEADER_BG)),
+        background: Some(iced::Background::Color(HEADER_BG())),
         ..Default::default()
     });
 
@@ -316,25 +317,25 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let sys_input = iced::widget::text_input("System prompt for this conversation...", &app.conv_system_prompt_value)
             .on_input(Message::ConvSystemPromptChanged)
             .on_submit(Message::SaveConvSystemPrompt)
-            .size(13).padding([10, 14])
+            .size(FONT_BODY).padding([10, 14])
             .style(|_: &Theme, status: iced::widget::text_input::Status| iced::widget::text_input::Style {
-                background: iced::Background::Color(INPUT_BG),
+                background: iced::Background::Color(INPUT_BG()),
                 border: Border { radius: 8.0.into(), width: 1.0, color: match status {
-                    iced::widget::text_input::Status::Focused { .. } => ACCENT,
-                    _ => BORDER_DEFAULT,
+                    iced::widget::text_input::Status::Focused { .. } => ACCENT(),
+                    _ => BORDER_DEFAULT(),
                 }},
-                icon: TEXT_MUTED, placeholder: TEXT_MUTED, value: TEXT_HEAD, selection: SELECTION,
+                icon: TEXT_MUTED(), placeholder: TEXT_MUTED(), value: TEXT_HEAD(), selection: SELECTION(),
             });
-        let save_btn = button(text("Save").size(11)).padding([6, 14]).on_press(Message::SaveConvSystemPrompt)
+        let save_btn = button(text("Save").size(FONT_SMALL)).padding([6, 14]).on_press(Message::SaveConvSystemPrompt)
             .style(|_: &Theme, status: button::Status| button::Style {
-                background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT, _ => ACCENT_DIM })),
-                text_color: TEXT_HEAD,
+                background: Some(iced::Background::Color(match status { button::Status::Hovered => ACCENT(), _ => ACCENT_DIM() })),
+                text_color: TEXT_HEAD(),
                 border: Border { radius: 8.0.into(), ..Default::default() },
                 ..Default::default()
             });
         messages_col = messages_col.push(
             container(column![
-                text("System Prompt (this conversation)").size(11).color(TEXT_MUTED),
+                text("System Prompt (this conversation)").size(FONT_SMALL).color(TEXT_MUTED()),
                 row![sys_input, iced::widget::Space::new().width(8), save_btn].align_y(Alignment::Center),
             ].spacing(6)).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 8.0, left: 0.0 })
         );
@@ -344,10 +345,10 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let model = short_model_name(&app.selected_model);
         messages_col = messages_col.push(
             container(column![
-                text("Stoa").size(24).color(TEXT_HEAD),
-                text("Share a thought to get started.").size(13).color(TEXT_MUTED),
+                text("Stoa").size(FONT_TITLE).color(TEXT_HEAD()),
+                text("Share a thought to get started.").size(FONT_BODY).color(TEXT_MUTED()),
                 iced::widget::Space::new().height(8),
-                text(format!("Model: {model}")).size(11).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
+                text(format!("Model: {model}")).size(FONT_SMALL).color(TEXT_MUTED()).font(iced::Font::MONOSPACE),
             ].spacing(4)).padding([48, 0])
         );
     }
@@ -362,15 +363,15 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                 let mut col = Column::new().spacing(4);
                 let is_special = is_special_user_message(&msg.content);
                 let label = special_label(&msg.content);
-                let label_color = if is_special { ACCENT } else { TEXT_SEC };
-                col = col.push(container(text(label).size(11).color(label_color)).width(Length::Fill).align_x(Alignment::End));
+                let label_color = if is_special { ACCENT() } else { TEXT_SEC() };
+                col = col.push(container(text(label).size(FONT_SMALL).color(label_color)).width(Length::Fill).align_x(Alignment::End));
 
                 let bubble_style: fn(&Theme) -> container::Style = if is_special { special_user_bubble } else { user_bubble };
                 col = col.push(
-                    container(container(text(msg.content.clone()).size(15).color(TEXT_HEAD)).padding([12, 16]).max_width(600).style(bubble_style))
+                    container(container(text(msg.content.clone()).size(FONT_BODY).color(TEXT_HEAD())).padding([12, 16]).max_width(600).style(bubble_style))
                         .width(Length::Fill).align_x(Alignment::End)
                 );
-                col = col.push(container(button(text("\u{00D7}").size(12)).padding([2, 6]).style(action_btn_style).on_press(Message::DeleteMessage(*i))).width(Length::Fill).align_x(Alignment::End));
+                col = col.push(container(button(text("\u{00D7}").size(FONT_SMALL)).padding([2, 6]).style(action_btn_style).on_press(Message::DeleteMessage(*i))).width(Length::Fill).align_x(Alignment::End));
                 messages_col = messages_col.push(container(col).width(Length::Fill));
             }
             DisplayGroup::Assistants(indices) => {
@@ -398,7 +399,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
                         messages_col = messages_col.push(
                             row![
-                                button(text(format!("{diff_label} ({model_a} vs {model_b})")).size(10))
+                                button(text(format!("{diff_label} ({model_a} vs {model_b})")).size(FONT_CAPTION))
                                     .padding([4, 10]).style(diff_btn_style).on_press(btn_msg),
                             ]
                         );
@@ -424,15 +425,15 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     }
 
     if let Some(ref err) = app.error_message {
-        let dismiss = button(text("\u{00D7}").size(12)).on_press(Message::DismissError).padding([2, 8])
+        let dismiss = button(text("\u{00D7}").size(FONT_SMALL)).on_press(Message::DismissError).padding([2, 8])
             .style(|_: &Theme, status: button::Status| button::Style {
                 background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                text_color: match status { button::Status::Hovered => DANGER, _ => ERROR_MUTED },
+                text_color: match status { button::Status::Hovered => DANGER(), _ => ERROR_MUTED() },
                 ..Default::default()
             });
         messages_col = messages_col.push(
             container(row![
-                text(err.to_string()).size(13).color(DANGER),
+                text(err.to_string()).size(FONT_BODY).color(DANGER()),
                 iced::widget::Space::new().width(Length::Fill),
                 dismiss,
             ].align_y(Alignment::Center)).width(Length::Fill).padding([10, 14]).style(error_style)
@@ -442,9 +443,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     column![
         chat_header,
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER())), ..Default::default() }),
         container(scrollable(messages_col).height(Length::Fill).anchor_bottom())
             .width(Length::Fill).height(Length::Fill)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG())), ..Default::default() }),
     ].into()
 }

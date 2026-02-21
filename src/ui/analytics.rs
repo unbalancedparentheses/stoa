@@ -9,17 +9,17 @@ use crate::ui::input_bar::{short_model_name, provider_icon};
 
 fn card_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
-        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE },
+        background: Some(iced::Background::Color(CARD_BG())),
+        border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_SUBTLE() },
         ..Default::default()
     }
 }
 
 fn stat_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
     row![
-        text(label).size(12).color(TEXT_SEC),
+        text(label).size(FONT_CAPTION).color(TEXT_SEC()),
         iced::widget::Space::new().width(Length::Fill),
-        text(value).size(12).color(TEXT_HEAD).font(iced::Font::MONOSPACE),
+        text(value).size(FONT_CAPTION).color(TEXT_HEAD()).font(iced::Font::MONOSPACE),
     ].align_y(Alignment::Center).into()
 }
 
@@ -35,9 +35,9 @@ struct ModelStats {
 
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let header = container(
-        row![text("Analytics").size(15).color(TEXT_HEAD)].align_y(Alignment::Center)
+        row![text("Analytics").size(FONT_H1).color(TEXT_HEAD())].align_y(Alignment::Center)
     ).width(Length::Fill).padding([14, 28]).style(|_: &Theme| container::Style {
-        background: Some(iced::Background::Color(HEADER_BG)),
+        background: Some(iced::Background::Color(HEADER_BG())),
         ..Default::default()
     });
 
@@ -78,7 +78,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
     // Overview card
     let overview = container(column![
-        text("Overview").size(13).color(TEXT_HEAD),
+        text("Overview").size(FONT_SMALL).color(TEXT_HEAD()),
         iced::widget::Space::new().height(8),
         stat_row("Conversations", total_conversations.to_string()),
         stat_row("Messages", total_messages.to_string()),
@@ -110,9 +110,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
         let card = container(column![
             row![
-                text(format!("{icon} {name}")).size(13).color(TEXT_HEAD),
+                text(format!("{icon} {name}")).size(FONT_SMALL).color(TEXT_HEAD()),
                 iced::widget::Space::new().width(Length::Fill),
-                text(format!("{} responses", stats.messages)).size(11).color(TEXT_MUTED),
+                text(format!("{} responses", stats.messages)).size(FONT_MICRO).color(TEXT_MUTED()),
             ].align_y(Alignment::Center),
             iced::widget::Space::new().height(6),
             stat_row("Tokens", format!("{}", stats.total_tokens)),
@@ -128,12 +128,12 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
     if sorted_models.is_empty() {
         model_cards = model_cards.push(
-            text("No model data yet. Start chatting to see analytics.").size(13).color(TEXT_MUTED)
+            text("No model data yet. Start chatting to see analytics.").size(FONT_SMALL).color(TEXT_MUTED())
         );
     }
 
     let content = column![
-        text("Per-Model Statistics").size(13).color(TEXT_HEAD),
+        text("Per-Model Statistics").size(FONT_SMALL).color(TEXT_HEAD()),
         model_cards,
     ].spacing(12);
 
@@ -146,9 +146,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     column![
         header,
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(BORDER_SUBTLE)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(BORDER_SUBTLE())), ..Default::default() }),
         container(scrollable(container(body).width(Length::Fill)))
             .width(Length::Fill).height(Length::Fill)
-            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG)), ..Default::default() }),
+            .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(MAIN_BG())), ..Default::default() }),
     ].into()
 }

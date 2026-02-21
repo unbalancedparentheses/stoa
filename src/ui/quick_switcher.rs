@@ -6,43 +6,43 @@ use crate::theme::*;
 
 fn modal_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(CARD_BG)),
-        border: Border { radius: 12.0.into(), width: 1.0, color: BORDER_DEFAULT },
+        background: Some(iced::Background::Color(CARD_BG())),
+        border: Border { radius: 12.0.into(), width: 1.0, color: BORDER_DEFAULT() },
         ..Default::default()
     }
 }
 
 fn overlay_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(OVERLAY_BG)),
+        background: Some(iced::Background::Color(OVERLAY_BG())),
         ..Default::default()
     }
 }
 
 fn input_style(_: &Theme, status: iced::widget::text_input::Status) -> iced::widget::text_input::Style {
     iced::widget::text_input::Style {
-        background: iced::Background::Color(INPUT_BG),
+        background: iced::Background::Color(INPUT_BG()),
         border: Border { radius: 8.0.into(), width: 1.0, color: match status {
-            iced::widget::text_input::Status::Focused { .. } => ACCENT,
-            _ => BORDER_DEFAULT,
+            iced::widget::text_input::Status::Focused { .. } => ACCENT(),
+            _ => BORDER_DEFAULT(),
         }},
-        icon: TEXT_MUTED,
-        placeholder: TEXT_MUTED,
-        value: TEXT_HEAD,
-        selection: SELECTION,
+        icon: TEXT_MUTED(),
+        placeholder: TEXT_MUTED(),
+        value: TEXT_HEAD(),
+        selection: SELECTION(),
     }
 }
 
 fn result_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_: &Theme, status: button::Status| {
         let bg = match (active, status) {
-            (true, _) => BG_ACTIVE,
-            (false, button::Status::Hovered) => BG_HOVER,
+            (true, _) => BG_ACTIVE(),
+            (false, button::Status::Hovered) => BG_HOVER(),
             _ => iced::Color::TRANSPARENT,
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color: if active { TEXT_HEAD } else { TEXT_SEC },
+            text_color: if active { TEXT_HEAD() } else { TEXT_SEC() },
             border: Border { radius: 4.0.into(), ..Default::default() },
             ..Default::default()
         }
@@ -53,7 +53,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let input = text_input("Search conversations...", &app.quick_switcher_query)
         .on_input(Message::QuickSwitcherQueryChanged)
         .id("quick-switcher-input")
-        .size(14)
+        .size(FONT_BODY)
         .padding([10, 16])
         .style(input_style);
 
@@ -78,7 +78,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         let is_active = i == app.active_conversation;
 
         results = results.push(
-            button(text(label).size(13))
+            button(text(label).size(FONT_SMALL))
                 .on_press(Message::QuickSwitcherSelect(i))
                 .width(Length::Fill)
                 .padding([8, 16])
@@ -89,7 +89,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
     let modal = container(
         column![
-            text("Quick Switcher").size(12).color(TEXT_MUTED),
+            text("Quick Switcher").size(FONT_CAPTION).color(TEXT_MUTED()),
             input,
             scrollable(results).height(300),
         ].spacing(8)
