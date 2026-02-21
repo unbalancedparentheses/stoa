@@ -1,7 +1,8 @@
-use iced::widget::{column, container, row, text, Column};
+use iced::widget::{button, column, container, row, text, Column};
 use iced::{Element, Length, Theme, Border};
 
 use crate::app::{ChatApp, Message};
+use crate::commands;
 use crate::theme::*;
 use crate::ui::input_bar::{short_model_name, provider_icon};
 
@@ -124,16 +125,36 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         container(iced::widget::Space::new()).width(Length::Fill).height(1)
             .style(|_: &Theme| container::Style { background: Some(iced::Background::Color(DIVIDER)), ..Default::default() })
     );
-    let shortcuts = container(column![
-        text("Shortcuts").size(12).color(TEXT_HEAD),
+    let mut shortcut_col = column![
+        row![
+            text("Shortcuts").size(12).color(TEXT_HEAD),
+            iced::widget::Space::new().width(Length::Fill),
+            button(text("?").size(11).color(TEXT_MUTED))
+                .on_press(Message::ToggleShortcutHelp)
+                .padding([2, 8])
+                .style(|_: &Theme, status: button::Status| button::Style {
+                    background: Some(iced::Background::Color(match status {
+                        button::Status::Hovered => BG_HOVER,
+                        _ => BG_ACTIVE,
+                    })),
+                    text_color: TEXT_MUTED,
+                    border: Border { radius: 8.0.into(), width: 1.0, color: BORDER_DEFAULT },
+                    ..Default::default()
+                }),
+        ].align_y(iced::Alignment::Center),
         iced::widget::Space::new().height(8),
-        row![text("Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send").size(10).color(TEXT_SEC)],
-        row![text("Cmd/Ctrl+N").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("New chat").size(10).color(TEXT_SEC)],
-        row![text("Cmd/Ctrl+K").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Quick switch").size(10).color(TEXT_SEC)],
-        row![text("Cmd/Ctrl+P").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Commands").size(10).color(TEXT_SEC)],
-        row![text("Cmd/Ctrl+E").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Export MD").size(10).color(TEXT_SEC)],
-        row![text("Cmd/Ctrl+Shift+Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE), iced::widget::Space::new().width(Length::Fill), text("Send all").size(10).color(TEXT_SEC)],
-    ].spacing(6)).padding([12, 20]);
+    ]
+    .spacing(6);
+    for (binding, label) in commands::shortcut_rows(&app.config.keybindings) {
+        shortcut_col = shortcut_col.push(
+            row![
+                text(binding).size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
+                iced::widget::Space::new().width(Length::Fill),
+                text(label).size(10).color(TEXT_SEC),
+            ]
+        );
+    }
+    let shortcuts = container(shortcut_col).padding([12, 20]);
     content_col = content_col.push(shortcuts);
 
     let content_col = content_col.height(Length::Fill);

@@ -1,4 +1,6 @@
 pub mod api;
+pub mod app;
+pub mod commands;
 pub mod config;
 pub mod cost;
 pub mod db;
@@ -6,5 +8,7 @@ pub mod diff;
 pub mod export;
 pub mod import;
 pub mod model;
-pub mod web_search;
+pub mod shortcuts;
 pub mod theme;
+pub mod ui;
+pub mod web_search;

@@ -801,3 +801,52 @@ fn openrouter_models_are_free_in_cost() {
     let cost = stoa::cost::message_cost("google/gemini-2.5-flash-preview", &Role::Assistant, 1000);
     assert_eq!(cost, 0.0);
 }
+
+// ── Shortcut / Overlay Regression Tests ─────────────────────
+
+#[test]
+fn esc_dismisses_overlays_one_layer_at_a_time() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    app.shortcut_help_open = true;
+    app.quick_switcher_open = true;
+    app.command_palette_open = true;
+    app.model_picker_open = true;
+
+    let _ = app.update(stoa::app::Message::DismissOverlay);
+    assert!(!app.shortcut_help_open);
+    assert!(app.quick_switcher_open);
+    assert!(app.command_palette_open);
+    assert!(app.model_picker_open);
+
+    let _ = app.update(stoa::app::Message::DismissOverlay);
+    assert!(!app.quick_switcher_open);
+    assert!(app.command_palette_open);
+    assert!(app.model_picker_open);
+
+    let _ = app.update(stoa::app::Message::DismissOverlay);
+    assert!(!app.command_palette_open);
+    assert!(app.model_picker_open);
+
+    let _ = app.update(stoa::app::Message::DismissOverlay);
+    assert!(!app.model_picker_open);
+}
+
+#[test]
+fn readme_shortcut_rows_match_shared_shortcut_table() {
+    let readme = std::fs::read_to_string("README.md").expect("read README");
+
+    let expected = [
+        ("Enter", "Send to primary model"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::SendToAll), "Send to all models"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::QuickSwitcher), "Quick Switcher"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::CommandPalette), "Command Palette"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::ExportMarkdown), "Export as Markdown"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::NewConversation), "New conversation"),
+        (&stoa::shortcuts::docs_binding(stoa::shortcuts::ShortcutAction::ShowSettings), "Settings"),
+    ];
+
+    for (binding, action) in expected {
+        let row = format!("| `{binding}` | {action} |");
+        assert!(readme.contains(&row), "README missing shortcut row: {row}");
+    }
+}

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Provider, ProviderConfig};
+use crate::shortcuts::{self, ShortcutAction};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -21,10 +22,80 @@ pub struct AppConfig {
     pub selected_model: Option<String>,
     #[serde(default)]
     pub ollama_models: Vec<String>,
+    #[serde(default)]
+    pub keybindings: Keybindings,
+    #[serde(default)]
+    pub debug_key_events: bool,
 }
 
 fn default_temperature() -> String { "0.7".to_string() }
 fn default_max_tokens() -> String { "4096".to_string() }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Keybindings {
+    #[serde(default = "default_send_to_all")]
+    pub send_to_all: String,
+    #[serde(default = "default_new_conversation")]
+    pub new_conversation: String,
+    #[serde(default = "default_show_settings")]
+    pub show_settings: String,
+    #[serde(default = "default_quick_switcher")]
+    pub quick_switcher: String,
+    #[serde(default = "default_command_palette")]
+    pub command_palette: String,
+    #[serde(default = "default_export_markdown")]
+    pub export_markdown: String,
+    #[serde(default = "default_toggle_shortcut_help")]
+    pub toggle_shortcut_help: String,
+}
+
+fn default_send_to_all() -> String { shortcuts::default_binding(ShortcutAction::SendToAll).to_string() }
+fn default_new_conversation() -> String { shortcuts::default_binding(ShortcutAction::NewConversation).to_string() }
+fn default_show_settings() -> String { shortcuts::default_binding(ShortcutAction::ShowSettings).to_string() }
+fn default_quick_switcher() -> String { shortcuts::default_binding(ShortcutAction::QuickSwitcher).to_string() }
+fn default_command_palette() -> String { shortcuts::default_binding(ShortcutAction::CommandPalette).to_string() }
+fn default_export_markdown() -> String { shortcuts::default_binding(ShortcutAction::ExportMarkdown).to_string() }
+fn default_toggle_shortcut_help() -> String { shortcuts::default_binding(ShortcutAction::ToggleShortcutHelp).to_string() }
+
+impl Default for Keybindings {
+    fn default() -> Self {
+        Self {
+            send_to_all: default_send_to_all(),
+            new_conversation: default_new_conversation(),
+            show_settings: default_show_settings(),
+            quick_switcher: default_quick_switcher(),
+            command_palette: default_command_palette(),
+            export_markdown: default_export_markdown(),
+            toggle_shortcut_help: default_toggle_shortcut_help(),
+        }
+    }
+}
+
+impl Keybindings {
+    pub fn get(&self, action: ShortcutAction) -> &str {
+        match action {
+            ShortcutAction::SendToAll => &self.send_to_all,
+            ShortcutAction::NewConversation => &self.new_conversation,
+            ShortcutAction::ShowSettings => &self.show_settings,
+            ShortcutAction::QuickSwitcher => &self.quick_switcher,
+            ShortcutAction::CommandPalette => &self.command_palette,
+            ShortcutAction::ExportMarkdown => &self.export_markdown,
+            ShortcutAction::ToggleShortcutHelp => &self.toggle_shortcut_help,
+        }
+    }
+
+    pub fn set(&mut self, action: ShortcutAction, binding: String) {
+        match action {
+            ShortcutAction::SendToAll => self.send_to_all = binding,
+            ShortcutAction::NewConversation => self.new_conversation = binding,
+            ShortcutAction::ShowSettings => self.show_settings = binding,
+            ShortcutAction::QuickSwitcher => self.quick_switcher = binding,
+            ShortcutAction::CommandPalette => self.command_palette = binding,
+            ShortcutAction::ExportMarkdown => self.export_markdown = binding,
+            ShortcutAction::ToggleShortcutHelp => self.toggle_shortcut_help = binding,
+        }
+    }
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -39,6 +110,8 @@ impl Default for AppConfig {
             max_tokens: "4096".to_string(),
             selected_model: None,
             ollama_models: Vec::new(),
+            keybindings: Keybindings::default(),
+            debug_key_events: false,
         }
     }
 }

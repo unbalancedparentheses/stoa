@@ -3,6 +3,7 @@ use iced::{Alignment, Element, Length, Color, Border, Theme};
 
 use crate::app::{ChatApp, Message};
 use crate::model::Provider;
+use crate::shortcuts;
 use crate::theme::*;
 
 fn field_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
@@ -290,6 +291,41 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(card_style);
 
+    // Keybindings
+    let mut keybinding_fields = column![text("Keybindings").size(12).color(TEXT_MUTED)].spacing(10);
+    for spec in shortcuts::specs() {
+        let action = spec.action;
+        keybinding_fields = keybinding_fields.push(
+            column![
+                text(spec.label).size(11).color(TEXT_MUTED),
+                text_input(crate::shortcuts::default_binding(action), config.keybindings.get(action))
+                    .on_input(move |v| Message::SetKeybinding(action, v))
+                    .padding([10, 14])
+                    .size(13)
+                    .style(field_style),
+            ]
+            .spacing(4)
+        );
+    }
+    keybinding_fields = keybinding_fields.push(
+        row![
+            text("Key Event Debug Log").size(11).color(TEXT_MUTED),
+            iced::widget::Space::new().width(Length::Fill),
+            button(text(if config.debug_key_events { "Enabled" } else { "Disabled" }).size(11))
+                .on_press(Message::SetDebugKeyEvents(!config.debug_key_events))
+                .padding([6, 12])
+                .style(debug_toggle_style(config.debug_key_events)),
+        ]
+        .align_y(Alignment::Center)
+    );
+    keybinding_fields = keybinding_fields.push(
+        text("Logs to ~/.config/stoa/key-events.log (local only, no telemetry).").size(10).color(TEXT_MUTED)
+    );
+    let keybindings_section = container(keybinding_fields)
+        .padding(16)
+        .width(Length::Fill)
+        .style(card_style);
+
     // Save
     let save_label = if app.config_saved { "\u{2713} Saved" } else { "Save" };
     let save_btn = button(
@@ -307,6 +343,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         fields_section,
         generation_section,
         system_prompt_section,
+        keybindings_section,
         save_btn,
     ]
     .spacing(12)
@@ -354,5 +391,25 @@ fn is_preset_active(config: &crate::config::AppConfig, preset: &str) -> bool {
         "Sonnet" => model.contains("sonnet"),
         "Haiku" => model.contains("haiku"),
         _ => false,
+    }
+}
+
+fn debug_toggle_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_: &Theme, status: button::Status| {
+        let bg = match (active, status) {
+            (true, _) => Color::from_rgb8(0x1e, 0x3a, 0x2a),
+            (false, button::Status::Hovered) => BG_HOVER,
+            _ => CARD_BG,
+        };
+        button::Style {
+            background: Some(iced::Background::Color(bg)),
+            text_color: if active { SUCCESS } else { TEXT_SEC },
+            border: Border {
+                radius: 8.0.into(),
+                width: 1.0,
+                color: if active { Color::from_rgb8(0x2a, 0x64, 0x48) } else { BORDER_DEFAULT },
+            },
+            ..Default::default()
+        }
     }
 }
