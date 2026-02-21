@@ -13,19 +13,19 @@ struct Command {
 
 fn all_commands() -> Vec<Command> {
     vec![
-        Command { label: "New Chat", description: "Create a new conversation", shortcut: "Ctrl+N", message: Message::NewConversation },
-        Command { label: "Settings", description: "Open settings", shortcut: "Ctrl+,", message: Message::ShowSettings },
+        Command { label: "New Chat", description: "Create a new conversation", shortcut: "Cmd/Ctrl+N", message: Message::NewConversation },
+        Command { label: "Settings", description: "Open settings", shortcut: "Cmd/Ctrl+,", message: Message::ShowSettings },
         Command { label: "Home", description: "Go to chat view", shortcut: "", message: Message::ShowChat },
-        Command { label: "Send to All", description: "Send to all available models", shortcut: "Ctrl+Shift+Enter", message: Message::SendToAll },
+        Command { label: "Send to All", description: "Send to all available models", shortcut: "Cmd/Ctrl+Shift+Enter", message: Message::SendToAll },
         Command { label: "Toggle Comparison", description: "Switch comparison mode on/off", shortcut: "", message: Message::ToggleComparisonMode },
-        Command { label: "Export Markdown", description: "Copy conversation as Markdown", shortcut: "Ctrl+E", message: Message::ExportMarkdown },
+        Command { label: "Export Markdown", description: "Copy conversation as Markdown", shortcut: "Cmd/Ctrl+E", message: Message::ExportMarkdown },
         Command { label: "Export HTML", description: "Copy conversation as styled HTML", shortcut: "", message: Message::ExportHtml },
         Command { label: "Export JSON", description: "Copy conversation as JSON", shortcut: "", message: Message::ExportJson },
         Command { label: "Import ChatGPT", description: "Import from ChatGPT export file", shortcut: "", message: Message::ImportChatGpt },
         Command { label: "Web Search", description: "Search web for current input", shortcut: "", message: Message::WebSearch },
         Command { label: "Refresh Ollama", description: "Re-scan local Ollama models", shortcut: "", message: Message::RefreshOllamaModels },
         Command { label: "Analytics", description: "View model stats and ratings", shortcut: "", message: Message::ShowAnalytics },
-        Command { label: "Quick Switcher", description: "Search conversations", shortcut: "Ctrl+K", message: Message::ToggleQuickSwitcher },
+        Command { label: "Quick Switcher", description: "Search conversations", shortcut: "Cmd/Ctrl+K", message: Message::ToggleQuickSwitcher },
     ]
 }
 
