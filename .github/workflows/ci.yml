@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check
+
+      - name: Shortcut unit tests
+        run: cargo test shortcut_maps -- --nocapture
+
+      - name: Overlay / README shortcut integration tests
+        run: cargo test esc_dismisses_overlays_one_layer_at_a_time -- --nocapture
+
+      - name: README shortcut sync integration tests
+        run: cargo test readme_shortcut_rows_match_shared_shortcut_table -- --nocapture

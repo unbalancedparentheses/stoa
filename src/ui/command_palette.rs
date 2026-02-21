@@ -2,32 +2,8 @@ use iced::widget::{button, column, container, scrollable, text, text_input, row,
 use iced::{Alignment, Element, Length, Border, Theme};
 
 use crate::app::{ChatApp, Message};
+use crate::commands;
 use crate::theme::*;
-
-struct Command {
-    label: &'static str,
-    description: &'static str,
-    shortcut: &'static str,
-    message: Message,
-}
-
-fn all_commands() -> Vec<Command> {
-    vec![
-        Command { label: "New Chat", description: "Create a new conversation", shortcut: "Cmd/Ctrl+N", message: Message::NewConversation },
-        Command { label: "Settings", description: "Open settings", shortcut: "Cmd/Ctrl+,", message: Message::ShowSettings },
-        Command { label: "Home", description: "Go to chat view", shortcut: "", message: Message::ShowChat },
-        Command { label: "Send to All", description: "Send to all available models", shortcut: "Cmd/Ctrl+Shift+Enter", message: Message::SendToAll },
-        Command { label: "Toggle Comparison", description: "Switch comparison mode on/off", shortcut: "", message: Message::ToggleComparisonMode },
-        Command { label: "Export Markdown", description: "Copy conversation as Markdown", shortcut: "Cmd/Ctrl+E", message: Message::ExportMarkdown },
-        Command { label: "Export HTML", description: "Copy conversation as styled HTML", shortcut: "", message: Message::ExportHtml },
-        Command { label: "Export JSON", description: "Copy conversation as JSON", shortcut: "", message: Message::ExportJson },
-        Command { label: "Import ChatGPT", description: "Import from ChatGPT export file", shortcut: "", message: Message::ImportChatGpt },
-        Command { label: "Web Search", description: "Search web for current input", shortcut: "", message: Message::WebSearch },
-        Command { label: "Refresh Ollama", description: "Re-scan local Ollama models", shortcut: "", message: Message::RefreshOllamaModels },
-        Command { label: "Analytics", description: "View model stats and ratings", shortcut: "", message: Message::ShowAnalytics },
-        Command { label: "Quick Switcher", description: "Search conversations", shortcut: "Cmd/Ctrl+K", message: Message::ToggleQuickSwitcher },
-    ]
-}
 
 fn modal_style(_: &Theme) -> container::Style {
     container::Style {
@@ -58,40 +34,57 @@ fn input_style(_: &Theme, status: iced::widget::text_input::Status) -> iced::wid
     }
 }
 
-fn cmd_style(_: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => BG_ACTIVE,
-        _ => iced::Color::TRANSPARENT,
-    };
-    button::Style {
-        background: Some(iced::Background::Color(bg)),
-        text_color: match status {
-            button::Status::Hovered => TEXT_HEAD,
-            _ => TEXT_SEC,
-        },
-        border: Border { radius: 4.0.into(), ..Default::default() },
-        ..Default::default()
+fn cmd_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_: &Theme, status: button::Status| {
+        let bg = match (active, status) {
+            (true, _) => BG_ACTIVE,
+            (false, button::Status::Hovered) => BG_HOVER,
+            _ => iced::Color::TRANSPARENT,
+        };
+        button::Style {
+            background: Some(iced::Background::Color(bg)),
+            text_color: if active { TEXT_HEAD } else {
+                match status {
+                    button::Status::Hovered => TEXT_HEAD,
+                    _ => TEXT_SEC,
+                }
+            },
+            border: Border { radius: 4.0.into(), ..Default::default() },
+            ..Default::default()
+        }
     }
+}
+
+pub fn filtered_commands(app: &ChatApp) -> Vec<commands::CommandEntry> {
+    commands::filtered_commands(&app.command_palette_query, &app.config.keybindings)
+}
+
+fn shortcuts_hint() -> Element<'static, Message> {
+    row![
+        text("↑↓").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
+        text("navigate").size(10).color(TEXT_MUTED),
+        text("Enter").size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE),
+        text("run").size(10).color(TEXT_MUTED),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 pub fn view(app: &ChatApp) -> Element<'_, Message> {
     let input = text_input("Type a command...", &app.command_palette_query)
         .on_input(Message::CommandPaletteQueryChanged)
+        .on_submit(Message::CommandPaletteExecuteSelected)
         .id("command-palette-input")
         .size(14)
         .padding([10, 16])
         .style(input_style);
 
-    let query = app.command_palette_query.to_lowercase();
+    let commands = filtered_commands(app);
     let mut results = Column::new().spacing(2);
 
-    for cmd in all_commands() {
-        if !query.is_empty() {
-            let label_match = cmd.label.to_lowercase().contains(&query);
-            let desc_match = cmd.description.to_lowercase().contains(&query);
-            if !label_match && !desc_match { continue; }
-        }
-
+    for (index, cmd) in commands.iter().enumerate() {
+        let is_selected = index == app.command_palette_selected.min(commands.len().saturating_sub(1));
         let mut cmd_row = row![
             text(cmd.label).size(13).color(TEXT_HEAD),
             iced::widget::Space::new().width(8),
@@ -101,7 +94,7 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
 
         if !cmd.shortcut.is_empty() {
             cmd_row = cmd_row.push(
-                text(cmd.shortcut).size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE)
+                text(cmd.shortcut.clone()).size(10).color(TEXT_MUTED).font(iced::Font::MONOSPACE)
             );
         }
 
@@ -110,13 +103,17 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
                 .on_press(cmd.message.clone())
                 .width(Length::Fill)
                 .padding([8, 16])
-                .style(cmd_style)
+                .style(cmd_style(is_selected))
         );
     }
 
     let modal = container(
         column![
-            text("Command Palette").size(12).color(TEXT_MUTED),
+            row![
+                text("Command Palette").size(12).color(TEXT_MUTED),
+                iced::widget::Space::new().width(Length::Fill),
+                shortcuts_hint(),
+            ].align_y(Alignment::Center),
             input,
             scrollable(results).height(300),
         ].spacing(8)

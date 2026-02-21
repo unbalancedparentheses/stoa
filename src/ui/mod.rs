@@ -7,4 +7,5 @@ pub mod markdown;
 pub mod quick_switcher;
 pub mod right_panel;
 pub mod settings;
+pub mod shortcut_help;
 pub mod sidebar;

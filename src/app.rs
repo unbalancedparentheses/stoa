@@ -1,5 +1,5 @@
 use iced::widget::{column, container, row};
-use iced::{event, keyboard, Element, Length, Subscription, Task, Theme, Color};
+use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme, Color};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -126,6 +126,8 @@ pub struct ChatApp {
     pub quick_switcher_query: String,
     pub command_palette_open: bool,
     pub command_palette_query: String,
+    pub command_palette_selected: usize,
+    pub shortcut_help_open: bool,
     // Sidebar search
     pub sidebar_search_query: String,
     pub sidebar_search_results: Option<Vec<String>>,
@@ -184,7 +186,7 @@ pub enum Message {
     StartRename(usize),
     RenameChanged(String),
     FinishRename,
-    CancelRename,
+    DismissOverlay,
     // Messages
     RetryMessage,
     DeleteMessage(usize),
@@ -214,6 +216,9 @@ pub enum Message {
     // Command palette
     ToggleCommandPalette,
     CommandPaletteQueryChanged(String),
+    CommandPaletteMoveSelection(i32),
+    CommandPaletteExecuteSelected,
+    ToggleShortcutHelp,
     // Sidebar search
     SidebarSearchChanged(String),
     #[allow(dead_code)]
@@ -254,14 +259,15 @@ pub enum Message {
     SetFolder(Option<String>),
     // Misc
     DismissError,
-    NoOp,
+    RequestStartupFocus,
+    FocusMainWindow(Option<window::Id>),
+    SetKeybinding(crate::shortcuts::ShortcutAction, String),
+    SetDebugKeyEvents(bool),
+    KeyboardPressed(keyboard::Key, keyboard::key::Physical, keyboard::Modifiers),
 }
 
 impl ChatApp {
-    pub fn new() -> (Self, Task<Message>) {
-        let config = AppConfig::load();
-        let db = crate::db::open();
-        let conversations = crate::db::load_all(&db);
+    fn from_parts(config: AppConfig, db: Connection, conversations: Vec<Conversation>) -> Self {
         let conversations = if conversations.is_empty() {
             let c = Conversation::new();
             crate::db::save_conversation(&db, &c);
@@ -273,7 +279,122 @@ impl ChatApp {
         let selected_model = config.selected_model.clone()
             .unwrap_or_else(|| config.active_provider_config().model.clone());
 
-        // Discover Ollama models on startup
+        Self {
+            conversations,
+            active_conversation: 0,
+            input_value: String::new(),
+            config,
+            view: View::Chat,
+            error_message: None,
+            config_saved: false,
+            renaming_conversation: None,
+            rename_value: String::new(),
+            last_latency_ms: None,
+            db,
+            selected_model,
+            model_picker_open: false,
+            review_picker: None,
+            analyze_source_conversation: None,
+            next_stream_id: 0,
+            active_streams: HashMap::new(),
+            selected_models: HashSet::new(),
+            comparison_mode: false,
+            diff_active: None,
+            quick_switcher_open: false,
+            quick_switcher_query: String::new(),
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
+            shortcut_help_open: false,
+            sidebar_search_query: String::new(),
+            sidebar_search_results: None,
+            tag_input_open: false,
+            tag_input_value: String::new(),
+            session_cost: 0.0,
+            conv_system_prompt_open: false,
+            conv_system_prompt_value: String::new(),
+            attached_file: None,
+            attached_filename: None,
+            attached_images: Vec::new(),
+            web_search_pending: false,
+            web_search_context: None,
+        }
+    }
+
+    fn dismiss_top_overlay(&mut self) {
+        if self.shortcut_help_open {
+            self.shortcut_help_open = false;
+        } else if self.quick_switcher_open {
+            self.quick_switcher_open = false;
+            self.quick_switcher_query.clear();
+        } else if self.command_palette_open {
+            self.command_palette_open = false;
+            self.command_palette_query.clear();
+            self.command_palette_selected = 0;
+        } else if self.model_picker_open {
+            self.model_picker_open = false;
+        } else if self.review_picker.is_some() {
+            self.review_picker = None;
+        } else if self.analyze_source_conversation.is_some() {
+            self.analyze_source_conversation = None;
+        } else if self.tag_input_open {
+            self.tag_input_open = false;
+            self.tag_input_value.clear();
+        } else if self.conv_system_prompt_open {
+            self.conv_system_prompt_open = false;
+            self.conv_system_prompt_value.clear();
+        } else if self.diff_active.is_some() {
+            self.diff_active = None;
+        } else if self.renaming_conversation.is_some() {
+            self.renaming_conversation = None;
+            self.rename_value.clear();
+        }
+    }
+
+    fn command_palette_commands(&self) -> Vec<crate::commands::CommandEntry> {
+        crate::commands::filtered_commands(&self.command_palette_query, &self.config.keybindings)
+    }
+
+    fn command_palette_selection_count(&self) -> usize {
+        self.command_palette_commands().len()
+    }
+
+    fn map_shortcut_action(action: crate::shortcuts::ShortcutAction) -> Message {
+        match action {
+            crate::shortcuts::ShortcutAction::SendToAll => Message::SendToAll,
+            crate::shortcuts::ShortcutAction::NewConversation => Message::NewConversation,
+            crate::shortcuts::ShortcutAction::ShowSettings => Message::ShowSettings,
+            crate::shortcuts::ShortcutAction::QuickSwitcher => Message::ToggleQuickSwitcher,
+            crate::shortcuts::ShortcutAction::CommandPalette => Message::ToggleCommandPalette,
+            crate::shortcuts::ShortcutAction::ExportMarkdown => Message::ExportMarkdown,
+            crate::shortcuts::ShortcutAction::ToggleShortcutHelp => Message::ToggleShortcutHelp,
+        }
+    }
+
+    fn shortcut_message(
+        keybindings: &crate::config::Keybindings,
+        key: &keyboard::Key,
+        physical_key: &keyboard::key::Physical,
+        modifiers: keyboard::Modifiers,
+    ) -> Option<Message> {
+        if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
+            return Some(Message::DismissOverlay);
+        }
+
+        crate::shortcuts::action_for_event(
+            |action| keybindings.get(action).to_string(),
+            key,
+            physical_key,
+            modifiers,
+        ).map(Self::map_shortcut_action)
+    }
+
+    pub fn new() -> (Self, Task<Message>) {
+        let config = AppConfig::load();
+        let db = crate::db::open();
+        let conversations = crate::db::load_all(&db);
+        let app = Self::from_parts(config.clone(), db, conversations);
+
         let ollama_url = config.ollama.api_url.clone();
         let discover_task = Task::perform(
             async move { crate::api::ollama::discover_models(&ollama_url).await },
@@ -283,47 +404,24 @@ impl ChatApp {
             },
         );
 
-        (
-            Self {
-                conversations,
-                active_conversation: 0,
-                input_value: String::new(),
-                config,
-                view: View::Chat,
-                error_message: None,
-                config_saved: false,
-                renaming_conversation: None,
-                rename_value: String::new(),
-                last_latency_ms: None,
-                db,
-                selected_model,
-                model_picker_open: false,
-                review_picker: None,
-                analyze_source_conversation: None,
-                next_stream_id: 0,
-                active_streams: HashMap::new(),
-                selected_models: HashSet::new(),
-                comparison_mode: false,
-                diff_active: None,
-                quick_switcher_open: false,
-                quick_switcher_query: String::new(),
-                command_palette_open: false,
-                command_palette_query: String::new(),
-                sidebar_search_query: String::new(),
-                sidebar_search_results: None,
-                tag_input_open: false,
-                tag_input_value: String::new(),
-                session_cost: 0.0,
-                conv_system_prompt_open: false,
-                conv_system_prompt_value: String::new(),
-                attached_file: None,
-                attached_filename: None,
-                attached_images: Vec::new(),
-                web_search_pending: false,
-                web_search_context: None,
+        let startup_focus = Task::perform(
+            async move {
+                #[cfg(target_os = "macos")]
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
             },
-            discover_task,
-        )
+            |_| Message::RequestStartupFocus,
+        );
+
+        (app, Task::batch(vec![discover_task, startup_focus]))
+    }
+
+    pub fn new_for_tests() -> Self {
+        let config = AppConfig::default();
+        let db = crate::db::open_in_memory();
+        let conversations = crate::db::load_all(&db);
+        Self::from_parts(config, db, conversations)
     }
 
     pub fn is_streaming(&self) -> bool {
@@ -410,6 +508,42 @@ impl ChatApp {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::KeyboardPressed(key, physical_key, modifiers) => {
+                if self.command_palette_open {
+                    if matches!(key, keyboard::Key::Named(keyboard::key::Named::ArrowUp)) {
+                        return self.update(Message::CommandPaletteMoveSelection(-1));
+                    }
+                    if matches!(key, keyboard::Key::Named(keyboard::key::Named::ArrowDown)) {
+                        return self.update(Message::CommandPaletteMoveSelection(1));
+                    }
+                    if matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter)) {
+                        return self.update(Message::CommandPaletteExecuteSelected);
+                    }
+                }
+
+                let mapped = Self::shortcut_message(&self.config.keybindings, &key, &physical_key, modifiers);
+                if self.config.debug_key_events {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    crate::shortcuts::append_debug_key_log(&format!(
+                        "{} key={:?} physical={:?} modifiers={{cmd:{},ctrl:{},shift:{},alt:{}}} mapped={:?}",
+                        ts,
+                        key,
+                        physical_key,
+                        modifiers.command(),
+                        modifiers.control(),
+                        modifiers.shift(),
+                        modifiers.alt(),
+                        mapped
+                    ));
+                }
+                if let Some(msg) = mapped {
+                    return self.update(msg);
+                }
+                Task::none()
+            }
             Message::InputChanged(value) => { self.input_value = value; Task::none() }
             Message::SendMessage => {
                 if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
@@ -645,16 +779,8 @@ impl ChatApp {
                 self.rename_value.clear();
                 Task::none()
             }
-            Message::CancelRename => {
-                self.renaming_conversation = None;
-                self.rename_value.clear();
-                self.model_picker_open = false;
-                self.review_picker = None;
-                self.analyze_source_conversation = None;
-                self.quick_switcher_open = false;
-                self.command_palette_open = false;
-                self.tag_input_open = false;
-                self.diff_active = None;
+            Message::DismissOverlay => {
+                self.dismiss_top_overlay();
                 Task::none()
             }
             Message::RetryMessage => {
@@ -769,6 +895,7 @@ impl ChatApp {
                 self.quick_switcher_open = !self.quick_switcher_open;
                 self.quick_switcher_query.clear();
                 self.command_palette_open = false;
+                self.shortcut_help_open = false;
                 if self.quick_switcher_open {
                     return iced::widget::operation::focus("quick-switcher-input");
                 }
@@ -788,13 +915,55 @@ impl ChatApp {
             Message::ToggleCommandPalette => {
                 self.command_palette_open = !self.command_palette_open;
                 self.command_palette_query.clear();
+                self.command_palette_selected = 0;
                 self.quick_switcher_open = false;
+                self.shortcut_help_open = false;
                 if self.command_palette_open {
                     return iced::widget::operation::focus("command-palette-input");
                 }
                 Task::none()
             }
-            Message::CommandPaletteQueryChanged(q) => { self.command_palette_query = q; Task::none() }
+            Message::CommandPaletteQueryChanged(q) => {
+                self.command_palette_query = q;
+                self.command_palette_selected = 0;
+                Task::none()
+            }
+            Message::CommandPaletteMoveSelection(delta) => {
+                let count = self.command_palette_selection_count();
+                if count == 0 {
+                    self.command_palette_selected = 0;
+                    return Task::none();
+                }
+                let current = self.command_palette_selected.min(count - 1) as i32;
+                let next = (current + delta).rem_euclid(count as i32) as usize;
+                self.command_palette_selected = next;
+                Task::none()
+            }
+            Message::CommandPaletteExecuteSelected => {
+                if !self.command_palette_open {
+                    return Task::none();
+                }
+                let commands = self.command_palette_commands();
+                if commands.is_empty() {
+                    return Task::none();
+                }
+                let idx = self.command_palette_selected.min(commands.len() - 1);
+                let cmd = commands[idx].message.clone();
+                self.command_palette_open = false;
+                self.command_palette_query.clear();
+                self.command_palette_selected = 0;
+                self.update(cmd)
+            }
+            Message::ToggleShortcutHelp => {
+                self.shortcut_help_open = !self.shortcut_help_open;
+                self.quick_switcher_open = false;
+                self.command_palette_open = false;
+                if self.shortcut_help_open {
+                    self.command_palette_query.clear();
+                    self.command_palette_selected = 0;
+                }
+                Task::none()
+            }
             // Sidebar search
             Message::SidebarSearchChanged(query) => {
                 self.sidebar_search_query = query.clone();
@@ -1015,7 +1184,35 @@ impl ChatApp {
                 Task::none()
             }
             Message::DismissError => { self.error_message = None; Task::none() }
-            Message::NoOp => Task::none()
+            Message::RequestStartupFocus => {
+                #[cfg(target_os = "macos")]
+                {
+                    return window::latest().map(Message::FocusMainWindow);
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Task::none()
+                }
+            }
+            Message::FocusMainWindow(window_id) => {
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(id) = window_id {
+                        return window::gain_focus(id);
+                    }
+                }
+                Task::none()
+            }
+            Message::SetKeybinding(action, binding) => {
+                self.config.keybindings.set(action, binding);
+                self.config_saved = false;
+                Task::none()
+            }
+            Message::SetDebugKeyEvents(enabled) => {
+                self.config.debug_key_events = enabled;
+                self.config_saved = false;
+                Task::none()
+            }
         }
     }
 
@@ -1044,7 +1241,11 @@ impl ChatApp {
         let layout = column![container(main_row).height(Length::Fill), bottom_bar];
         let base: Element<Message> = container(layout).width(Length::Fill).height(Length::Fill).into();
 
-        // Overlays: quick switcher and command palette
+        // Overlays: quick switcher, command palette, and shortcut cheat-sheet
+        if self.shortcut_help_open {
+            let overlay = ui::shortcut_help::view(self);
+            return iced::widget::stack![base, overlay].into();
+        }
         if self.quick_switcher_open {
             let overlay = ui::quick_switcher::view(self);
             return iced::widget::stack![base, overlay].into();
@@ -1058,46 +1259,66 @@ impl ChatApp {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        // Listen to ALL app events so shortcuts still work while text inputs are focused.
         event::listen_with(|event, _status, _window| {
             let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) = event else {
                 return None;
             };
-
-            let has_mod = modifiers.command() || modifiers.control();
-
-            if has_mod && modifiers.shift()
-                && matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter))
-            {
-                return Some(Message::SendToAll);
-            }
-
-            if has_mod {
-                if let keyboard::Key::Character(ref c) = key {
-                    match c.to_lowercase().as_str() {
-                        "n" => return Some(Message::NewConversation),
-                        "k" => return Some(Message::ToggleQuickSwitcher),
-                        "p" => return Some(Message::ToggleCommandPalette),
-                        "e" => return Some(Message::ExportMarkdown),
-                        "," => return Some(Message::ShowSettings),
-                        _ => {}
-                    }
-                }
-                match physical_key {
-                    keyboard::key::Physical::Code(keyboard::key::Code::KeyN) => return Some(Message::NewConversation),
-                    keyboard::key::Physical::Code(keyboard::key::Code::KeyK) => return Some(Message::ToggleQuickSwitcher),
-                    keyboard::key::Physical::Code(keyboard::key::Code::KeyP) => return Some(Message::ToggleCommandPalette),
-                    keyboard::key::Physical::Code(keyboard::key::Code::KeyE) => return Some(Message::ExportMarkdown),
-                    keyboard::key::Physical::Code(keyboard::key::Code::Comma) => return Some(Message::ShowSettings),
-                    _ => {}
-                }
-            }
-
-            if matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape)) {
-                return Some(Message::CancelRename);
-            }
-
-            None
+            Some(Message::KeyboardPressed(key, physical_key, modifiers))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Message;
+    use super::ChatApp;
+    use crate::config::Keybindings;
+    use iced::keyboard;
+
+    #[test]
+    fn shortcut_maps_character_keys() {
+        let key = keyboard::Key::Character("k".into());
+        let physical = keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified);
+        let modifiers = keyboard::Modifiers::from_bits_truncate(keyboard::Modifiers::COMMAND.bits());
+        let msg = ChatApp::shortcut_message(&Keybindings::default(), &key, &physical, modifiers);
+        assert!(matches!(msg, Some(Message::ToggleQuickSwitcher)));
+    }
+
+    #[test]
+    fn shortcut_maps_physical_keys() {
+        let key = keyboard::Key::Unidentified;
+        let physical = keyboard::key::Physical::Code(keyboard::key::Code::KeyP);
+        let modifiers = keyboard::Modifiers::from_bits_truncate(keyboard::Modifiers::COMMAND.bits());
+        let msg = ChatApp::shortcut_message(&Keybindings::default(), &key, &physical, modifiers);
+        assert!(matches!(msg, Some(Message::ToggleCommandPalette)));
+    }
+
+    #[test]
+    fn shortcut_maps_escape_to_overlay_dismiss() {
+        let key = keyboard::Key::Named(keyboard::key::Named::Escape);
+        let physical = keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified);
+        let modifiers = keyboard::Modifiers::default();
+        let msg = ChatApp::shortcut_message(&Keybindings::default(), &key, &physical, modifiers);
+        assert!(matches!(msg, Some(Message::DismissOverlay)));
+    }
+
+    #[test]
+    fn dismiss_overlay_is_topmost_first() {
+        let mut app = ChatApp::new_for_tests();
+        app.command_palette_open = true;
+        app.quick_switcher_open = true;
+        app.model_picker_open = true;
+
+        app.dismiss_top_overlay();
+        assert!(!app.quick_switcher_open);
+        assert!(app.command_palette_open);
+        assert!(app.model_picker_open);
+
+        app.dismiss_top_overlay();
+        assert!(!app.command_palette_open);
+        assert!(app.model_picker_open);
+
+        app.dismiss_top_overlay();
+        assert!(!app.model_picker_open);
     }
 }
