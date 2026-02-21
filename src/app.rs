@@ -417,6 +417,7 @@ impl ChatApp {
         (app, Task::batch(vec![discover_task, startup_focus]))
     }
 
+    #[allow(dead_code)]
     pub fn new_for_tests() -> Self {
         let config = AppConfig::default();
         let db = crate::db::open_in_memory();
