@@ -850,3 +850,24 @@ fn readme_shortcut_rows_match_shared_shortcut_table() {
         assert!(readme.contains(&row), "README missing shortcut row: {row}");
     }
 }
+
+#[test]
+fn keybinding_conflicts_are_detected() {
+    let mut keys = stoa::config::Keybindings::default();
+    keys.new_conversation = "Cmd+K".to_string();
+    keys.quick_switcher = "Cmd+K".to_string();
+    let conflicts = keys.conflicts();
+    assert!(conflicts.iter().any(|(binding, actions)|
+        binding == "Cmd+K"
+            && actions.contains(&stoa::shortcuts::ShortcutAction::NewConversation)
+            && actions.contains(&stoa::shortcuts::ShortcutAction::QuickSwitcher)
+    ));
+}
+
+#[test]
+fn config_migration_sets_current_schema_version() {
+    let mut cfg = stoa::config::AppConfig::default();
+    cfg.schema_version = 0;
+    cfg.migrate();
+    assert_eq!(cfg.schema_version, stoa::config::CONFIG_SCHEMA_VERSION);
+}

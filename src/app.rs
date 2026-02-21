@@ -82,6 +82,7 @@ pub enum View {
     Chat,
     Settings,
     Analytics,
+    Diagnostics,
 }
 
 pub struct ActiveStream {
@@ -147,6 +148,11 @@ pub struct ChatApp {
     // Web search
     pub web_search_pending: bool,
     pub web_search_context: Option<String>,
+    // Diagnostics
+    pub startup_focus_attempts: u32,
+    pub startup_focus_successes: u32,
+    pub diagnostics_last_run: Option<String>,
+    pub last_shortcut_event: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +241,8 @@ pub enum Message {
     RateMessage(usize, i8), // (msg_index, -1/0/1)
     // Analytics
     ShowAnalytics,
+    ShowDiagnostics,
+    RunDiagnostics,
     // Ollama
     OllamaModelsDiscovered(Vec<String>),
     RefreshOllamaModels,
@@ -262,6 +270,7 @@ pub enum Message {
     RequestStartupFocus,
     FocusMainWindow(Option<window::Id>),
     SetKeybinding(crate::shortcuts::ShortcutAction, String),
+    ResetKeybindings,
     SetDebugKeyEvents(bool),
     KeyboardPressed(keyboard::Key, keyboard::key::Physical, keyboard::Modifiers),
 }
@@ -318,6 +327,10 @@ impl ChatApp {
             attached_images: Vec::new(),
             web_search_pending: false,
             web_search_context: None,
+            startup_focus_attempts: 0,
+            startup_focus_successes: 0,
+            diagnostics_last_run: None,
+            last_shortcut_event: None,
         }
     }
 
@@ -523,6 +536,13 @@ impl ChatApp {
                 }
 
                 let mapped = Self::shortcut_message(&self.config.keybindings, &key, &physical_key, modifiers);
+                self.last_shortcut_event = Some(format!(
+                    "key={key:?} physical={physical_key:?} cmd={} ctrl={} shift={} alt={} mapped={mapped:?}",
+                    modifiers.command(),
+                    modifiers.control(),
+                    modifiers.shift(),
+                    modifiers.alt(),
+                ));
                 if self.config.debug_key_events {
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1030,6 +1050,19 @@ impl ChatApp {
                 self.model_picker_open = false;
                 Task::none()
             }
+            Message::ShowDiagnostics => {
+                self.view = View::Diagnostics;
+                self.model_picker_open = false;
+                Task::none()
+            }
+            Message::RunDiagnostics => {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                self.diagnostics_last_run = Some(format!("unix:{ts}"));
+                Task::none()
+            }
             // Ollama
             Message::OllamaModelsDiscovered(models) => {
                 self.config.ollama_models = models;
@@ -1186,6 +1219,7 @@ impl ChatApp {
             }
             Message::DismissError => { self.error_message = None; Task::none() }
             Message::RequestStartupFocus => {
+                self.startup_focus_attempts = self.startup_focus_attempts.saturating_add(1);
                 #[cfg(target_os = "macos")]
                 {
                     return window::latest().map(Message::FocusMainWindow);
@@ -1199,6 +1233,7 @@ impl ChatApp {
                 #[cfg(target_os = "macos")]
                 {
                     if let Some(id) = window_id {
+                        self.startup_focus_successes = self.startup_focus_successes.saturating_add(1);
                         return window::gain_focus(id);
                     }
                 }
@@ -1206,6 +1241,11 @@ impl ChatApp {
             }
             Message::SetKeybinding(action, binding) => {
                 self.config.keybindings.set(action, binding);
+                self.config_saved = false;
+                Task::none()
+            }
+            Message::ResetKeybindings => {
+                self.config.keybindings = crate::config::Keybindings::default();
                 self.config_saved = false;
                 Task::none()
             }
@@ -1235,6 +1275,7 @@ impl ChatApp {
             }
             View::Settings => ui::settings::view(self),
             View::Analytics => ui::analytics::view(self),
+            View::Diagnostics => ui::diagnostics::view(self),
         };
 
         let sep_v = || container(iced::widget::Space::new()).width(1).height(Length::Fill).style(sep);
@@ -1321,5 +1362,23 @@ mod tests {
 
         app.dismiss_top_overlay();
         assert!(!app.model_picker_open);
+    }
+
+    #[test]
+    fn startup_focus_request_records_attempt() {
+        let mut app = ChatApp::new_for_tests();
+        let _ = app.update(Message::RequestStartupFocus);
+        assert!(app.startup_focus_attempts >= 1);
+    }
+
+    #[test]
+    fn reset_keybindings_restores_defaults() {
+        let mut app = ChatApp::new_for_tests();
+        app.config.keybindings.new_conversation = "Ctrl+Shift+N".to_string();
+        let _ = app.update(Message::ResetKeybindings);
+        assert_eq!(
+            app.config.keybindings.new_conversation,
+            crate::shortcuts::default_binding(crate::shortcuts::ShortcutAction::NewConversation)
+        );
     }
 }

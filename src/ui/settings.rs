@@ -308,6 +308,41 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
             .spacing(4)
         );
     }
+    let conflicts = config.keybindings.conflicts();
+    if !conflicts.is_empty() {
+        let mut conflict_col = iced::widget::Column::new().spacing(4);
+        conflict_col = conflict_col.push(
+            text("Shortcut conflicts detected").size(11).color(DANGER)
+        );
+        for (binding, actions) in conflicts {
+            let labels = actions.into_iter()
+                .map(shortcuts::action_label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            conflict_col = conflict_col.push(
+                text(format!("{binding} -> {labels}")).size(10).color(TEXT_MUTED)
+            );
+        }
+        keybinding_fields = keybinding_fields.push(
+            container(conflict_col)
+                .padding(10)
+                .style(|_: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0x2a, 0x18, 0x18))),
+                    border: Border { radius: 6.0.into(), width: 1.0, color: DANGER },
+                    ..Default::default()
+                })
+        );
+    }
+    keybinding_fields = keybinding_fields.push(
+        row![
+            button(text("Reset to defaults").size(11))
+                .on_press(Message::ResetKeybindings)
+                .padding([6, 12])
+                .style(chip_style(false)),
+            iced::widget::Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+    );
     keybinding_fields = keybinding_fields.push(
         row![
             text("Key Event Debug Log").size(11).color(TEXT_MUTED),

@@ -87,6 +87,12 @@ pub fn all_commands(bindings: &Keybindings) -> Vec<CommandEntry> {
             message: Message::ShowAnalytics,
         },
         CommandEntry {
+            label: "Diagnostics",
+            description: "Inspect keyboard/focus diagnostics",
+            shortcut: String::new(),
+            message: Message::ShowDiagnostics,
+        },
+        CommandEntry {
             label: "Quick Switcher",
             description: "Search conversations",
             shortcut: shortcut(ShortcutAction::QuickSwitcher),

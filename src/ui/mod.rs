@@ -2,6 +2,7 @@ pub mod analytics;
 pub mod bottom_bar;
 pub mod chat_view;
 pub mod command_palette;
+pub mod diagnostics;
 pub mod input_bar;
 pub mod markdown;
 pub mod quick_switcher;

@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::model::{Provider, ProviderConfig};
 use crate::shortcuts::{self, ShortcutAction};
 
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub active_provider: Provider,
     pub openai: ProviderConfig,
     pub anthropic: ProviderConfig,
@@ -30,6 +35,7 @@ pub struct AppConfig {
 
 fn default_temperature() -> String { "0.7".to_string() }
 fn default_max_tokens() -> String { "4096".to_string() }
+fn default_schema_version() -> u32 { CONFIG_SCHEMA_VERSION }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keybindings {
@@ -95,11 +101,36 @@ impl Keybindings {
             ShortcutAction::ToggleShortcutHelp => self.toggle_shortcut_help = binding,
         }
     }
+
+    pub fn conflicts(&self) -> Vec<(String, Vec<ShortcutAction>)> {
+        let mut by_binding: HashMap<String, Vec<ShortcutAction>> = HashMap::new();
+        for spec in shortcuts::specs() {
+            let key = self.get(spec.action).trim().to_string();
+            if key.is_empty() {
+                continue;
+            }
+            by_binding.entry(key).or_default().push(spec.action);
+        }
+
+        let mut out: Vec<(String, Vec<ShortcutAction>)> = by_binding
+            .into_iter()
+            .filter_map(|(binding, actions)| {
+                if actions.len() > 1 {
+                    Some((binding, actions))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            schema_version: CONFIG_SCHEMA_VERSION,
             active_provider: Provider::OpenAI,
             openai: ProviderConfig::default_openai(),
             anthropic: ProviderConfig::default_anthropic(),
@@ -129,8 +160,19 @@ impl AppConfig {
         let path = Self::config_path();
         if path.exists() {
             if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str(&data) {
+                if let Ok(mut config) = serde_json::from_str::<AppConfig>(&data) {
+                    config.migrate();
                     return config;
+                }
+                if let Ok(mut legacy) = serde_json::from_str::<serde_json::Value>(&data) {
+                    let schema_version = legacy["schema_version"].as_u64().unwrap_or(1);
+                    if schema_version < CONFIG_SCHEMA_VERSION as u64 {
+                        legacy["schema_version"] = serde_json::json!(CONFIG_SCHEMA_VERSION);
+                    }
+                    if let Ok(mut config) = serde_json::from_value::<AppConfig>(legacy) {
+                        config.migrate();
+                        return config;
+                    }
                 }
             }
         }
@@ -139,8 +181,23 @@ impl AppConfig {
 
     pub fn save(&self) {
         let path = Self::config_path();
-        if let Ok(json) = serde_json::to_string_pretty(self) {
+        let mut copy = self.clone();
+        copy.schema_version = CONFIG_SCHEMA_VERSION;
+        if let Ok(json) = serde_json::to_string_pretty(&copy) {
             std::fs::write(path, json).ok();
+        }
+    }
+
+    pub fn migrate(&mut self) {
+        if self.schema_version == 0 {
+            self.schema_version = 1;
+        }
+        // v1 -> v2: keybindings/debug fields were added; serde defaults already fill missing values.
+        if self.schema_version < 2 {
+            self.schema_version = 2;
+        }
+        if self.schema_version > CONFIG_SCHEMA_VERSION {
+            self.schema_version = CONFIG_SCHEMA_VERSION;
         }
     }
 

@@ -78,6 +78,14 @@ pub fn specs() -> &'static [ShortcutSpec] {
     &SPECS
 }
 
+pub fn action_label(action: ShortcutAction) -> &'static str {
+    SPECS
+        .iter()
+        .find(|s| s.action == action)
+        .map(|s| s.label)
+        .unwrap_or("Unknown")
+}
+
 pub fn default_binding(action: ShortcutAction) -> &'static str {
     let spec = SPECS.iter().find(|s| s.action == action).expect("missing shortcut spec");
     if cfg!(target_os = "macos") {
@@ -265,19 +273,24 @@ pub fn action_for_event<F: Fn(ShortcutAction) -> String>(
 }
 
 pub fn append_debug_key_log(line: &str) {
-    let Some(mut path) = dirs::config_dir() else {
-        return;
-    };
-    path.push("stoa");
-    if std::fs::create_dir_all(&path).is_err() {
-        return;
+    let Some(path) = key_log_path() else { return };
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
     }
-    path.push("key-events.log");
 
     let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
     let _ = writeln!(file, "{line}");
+}
+
+pub fn key_log_path() -> Option<std::path::PathBuf> {
+    let mut path = dirs::config_dir()?;
+    path.push("stoa");
+    path.push("key-events.log");
+    Some(path)
 }
 
 #[cfg(test)]
