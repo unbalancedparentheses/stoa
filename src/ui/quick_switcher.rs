@@ -65,7 +65,9 @@ pub fn view(app: &ChatApp) -> Element<'_, Message> {
         if !query.is_empty() {
             let title_match = conv.title.to_lowercase().contains(&query);
             let tag_match = conv.tags.iter().any(|t| t.to_lowercase().contains(&query));
-            let content_match = conv.messages.iter().any(|m| m.content.to_lowercase().contains(&query));
+            // Only search message content for longer queries (3+ chars) to avoid lag
+            let content_match = query.len() >= 3
+                && conv.messages.iter().any(|m| m.content.to_lowercase().contains(&query));
             if !title_match && !tag_match && !content_match { continue; }
         }
 

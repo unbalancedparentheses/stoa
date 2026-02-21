@@ -1,8 +1,6 @@
 use futures::Stream;
 use reqwest_eventsource::{Event, EventSource};
 use std::pin::Pin;
-use std::time::Duration;
-
 use crate::api::{LlmEvent, TokenUsage};
 use crate::model::{ChatMessage, Provider, ProviderConfig, Role};
 
@@ -51,6 +49,7 @@ fn to_openai_messages(
 }
 
 pub fn stream(
+    client: reqwest::Client,
     config: ProviderConfig,
     messages: Vec<ChatMessage>,
     system_prompt: Option<String>,
@@ -64,11 +63,6 @@ pub fn stream(
             yield LlmEvent::Error("API key not set. Go to Settings to configure.".into());
             return;
         }
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(if is_ollama { 120 } else { 30 }))
-            .build()
-            .unwrap_or_default();
 
         let mut body = serde_json::json!({
             "model": config.model,

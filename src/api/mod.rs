@@ -21,7 +21,16 @@ pub enum LlmEvent {
     Error(String),
 }
 
+pub fn new_shared_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .pool_max_idle_per_host(4)
+        .build()
+        .unwrap_or_default()
+}
+
 pub fn stream_completion(
+    client: reqwest::Client,
     config: ProviderConfig,
     messages: Vec<ChatMessage>,
     system_prompt: Option<String>,
@@ -29,7 +38,7 @@ pub fn stream_completion(
     max_tokens: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = LlmEvent> + Send>> {
     match config.provider {
-        Provider::OpenAI | Provider::Ollama | Provider::OpenRouter => openai::stream(config, messages, system_prompt, temperature, max_tokens),
-        Provider::Anthropic => anthropic::stream(config, messages, system_prompt, temperature, max_tokens),
+        Provider::OpenAI | Provider::Ollama | Provider::OpenRouter => openai::stream(client, config, messages, system_prompt, temperature, max_tokens),
+        Provider::Anthropic => anthropic::stream(client, config, messages, system_prompt, temperature, max_tokens),
     }
 }

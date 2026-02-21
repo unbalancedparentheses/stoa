@@ -11,12 +11,7 @@ use crate::ui;
 pub type StreamId = usize;
 
 /// Generate a short conversation title using the LLM.
-async fn generate_title(config: crate::model::ProviderConfig, user_msg: String, assistant_msg: String) -> String {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap_or_default();
-
+async fn generate_title(client: reqwest::Client, config: crate::model::ProviderConfig, user_msg: String, assistant_msg: String) -> String {
     let prompt = format!(
         "Generate a very short title (3-6 words, no quotes) for a conversation that starts with:\nUser: {}\nAssistant: {}",
         user_msg.chars().take(200).collect::<String>(),
@@ -110,6 +105,8 @@ pub struct ChatApp {
     pub last_latency_ms: Option<u128>,
     // Database
     db: Connection,
+    // Shared HTTP client
+    pub http_client: reqwest::Client,
     // Multi-model
     pub selected_model: String,
     pub model_picker_open: bool,
@@ -261,7 +258,7 @@ pub enum Message {
     ExportJson,
     // Import
     ImportChatGpt,
-    ImportComplete(usize), // number of conversations imported
+    ImportComplete(Vec<Conversation>), // imported conversations to save
     // Folders
     #[allow(dead_code)]
     SetFolder(Option<String>),
@@ -279,7 +276,7 @@ impl ChatApp {
     fn from_parts(config: AppConfig, db: Connection, conversations: Vec<Conversation>) -> Self {
         let conversations = if conversations.is_empty() {
             let c = Conversation::new();
-            crate::db::save_conversation(&db, &c);
+            let _ = crate::db::save_conversation(&db, &c);
             vec![c]
         } else {
             conversations
@@ -300,6 +297,7 @@ impl ChatApp {
             rename_value: String::new(),
             last_latency_ms: None,
             db,
+            http_client: crate::api::new_shared_client(),
             selected_model,
             model_picker_open: false,
             review_picker: None,
@@ -331,6 +329,17 @@ impl ChatApp {
             startup_focus_successes: 0,
             diagnostics_last_run: None,
             last_shortcut_event: None,
+        }
+    }
+
+    fn active_conv(&self) -> Option<&Conversation> {
+        self.conversations.get(self.active_conversation)
+    }
+
+    fn handle_db_result(error_message: &mut Option<String>, result: Result<(), String>) {
+        if let Err(e) = result {
+            eprintln!("[stoa] DB error: {e}");
+            *error_message = Some(e);
         }
     }
 
@@ -443,8 +452,8 @@ impl ChatApp {
     }
 
     pub fn is_active_conv_streaming(&self) -> bool {
-        let conv_id = &self.conversations[self.active_conversation].id;
-        self.active_streams.values().any(|s| s.conversation_id == *conv_id)
+        let Some(conv) = self.active_conv() else { return false };
+        self.active_streams.values().any(|s| s.conversation_id == conv.id)
     }
 
     pub fn conv_has_streams(&self, conv_id: &str) -> bool {
@@ -475,7 +484,7 @@ impl ChatApp {
 
     fn start_stream(&mut self, model_id: &str) -> Task<Message> {
         self.error_message = None;
-        let conv = &mut self.conversations[self.active_conversation];
+        let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
         let conv_id = conv.id.clone();
         let msg_index = conv.push_streaming_assistant(Some(model_id.to_string()));
         let messages = conv.messages.clone();
@@ -495,7 +504,7 @@ impl ChatApp {
         self.next_stream_id += 1;
 
         let (task, handle) = Task::run(
-            crate::api::stream_completion(provider_config, messages, system_prompt, temperature, max_tokens),
+            crate::api::stream_completion(self.http_client.clone(), provider_config, messages, system_prompt, temperature, max_tokens),
             move |event| match event {
                 crate::api::LlmEvent::Token(t) => Message::StreamToken(stream_id, t),
                 crate::api::LlmEvent::Done(_usage) => Message::StreamComplete(stream_id),
@@ -584,7 +593,7 @@ impl ChatApp {
                 }
                 let images = std::mem::take(&mut self.attached_images);
                 let model_id = self.selected_model.clone();
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 if images.is_empty() {
                     conv.add_user_message(&text, Some(model_id.clone()));
                 } else {
@@ -593,7 +602,7 @@ impl ChatApp {
                 if let Some(msg) = conv.messages.last_mut() {
                     msg.token_count = Some(crate::cost::estimate_tokens(&text));
                 }
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.start_stream(&model_id)
             }
             Message::SendToModels(model_ids) => {
@@ -603,10 +612,10 @@ impl ChatApp {
                 self.error_message = None;
                 self.model_picker_open = false;
                 self.last_latency_ms = None;
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.add_user_message(&text, None);
                 if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.start_multi_stream(&model_ids)
             }
             Message::SendToAll => {
@@ -617,10 +626,10 @@ impl ChatApp {
                 self.error_message = None;
                 self.model_picker_open = false;
                 self.last_latency_ms = None;
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.add_user_message(&text, None);
                 if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.start_multi_stream(&all_ids)
             }
             Message::ToggleModelSelection(model_id) => {
@@ -635,11 +644,10 @@ impl ChatApp {
                         self.last_latency_ms = Some(stream.stream_start.elapsed().as_millis());
                     }
                     stream.current_response.push_str(&token);
-                    let content = stream.current_response.clone();
                     let idx = stream.message_index;
                     let conv_id = stream.conversation_id.clone();
                     if let Some(ci) = self.conv_index_by_id(&conv_id) {
-                        self.conversations[ci].update_streaming_at(idx, &content);
+                        self.conversations[ci].append_streaming_token(idx, &token);
                     }
                 }
                 Task::none()
@@ -666,10 +674,10 @@ impl ChatApp {
                         }
                         // Auto-title: if this is the first assistant message and title looks auto-generated
                         let should_auto_title = conv.messages.iter().filter(|m| m.role == Role::Assistant && !m.streaming).count() == 1
-                            && conv.title.len() <= 30
+                            && conv.title.chars().count() <= 30
                             && conv.forked_from.is_none();
 
-                        crate::db::save_conversation(&self.db, conv);
+                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
 
                         if should_auto_title {
                             let conv_id = conv.id.clone();
@@ -678,7 +686,7 @@ impl ChatApp {
                             let model = stream.model.clone();
                             let provider_config = self.config.provider_config_for_model(&model);
                             return Task::perform(
-                                generate_title(provider_config, user_msg, assistant_msg),
+                                generate_title(self.http_client.clone(), provider_config, user_msg, assistant_msg),
                                 move |title| Message::AutoTitleResult(conv_id.clone(), title),
                             );
                         }
@@ -692,14 +700,15 @@ impl ChatApp {
                     if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
                         let conv = &mut self.conversations[ci];
                         conv.finalize_at(stream.message_index, &error_content);
-                        crate::db::save_conversation(&self.db, conv);
+                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                     }
                 }
                 self.error_message = Some(err);
                 Task::none()
             }
             Message::StopStreaming => {
-                let active_conv_id = self.conversations[self.active_conversation].id.clone();
+                let Some(active_conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
+                let active_conv_id = active_conv.id.clone();
                 let all_streams: HashMap<StreamId, ActiveStream> = std::mem::take(&mut self.active_streams);
                 let mut remaining = HashMap::new();
                 let mut to_finalize = Vec::new();
@@ -718,7 +727,7 @@ impl ChatApp {
                         let content = if stream.current_response.is_empty() { "[stopped]".to_string() } else { stream.current_response };
                         conv.finalize_at(stream.message_index, &content);
                     }
-                    crate::db::save_conversation(&self.db, conv);
+                    Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 }
                 Task::none()
             }
@@ -729,7 +738,7 @@ impl ChatApp {
                     if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
                         let conv = &mut self.conversations[ci];
                         conv.finalize_at(stream.message_index, &content);
-                        crate::db::save_conversation(&self.db, conv);
+                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                     }
                 }
                 Task::none()
@@ -746,7 +755,7 @@ impl ChatApp {
             }
             Message::NewConversation => {
                 let conv = Conversation::new();
-                crate::db::save_conversation(&self.db, &conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, &conv));
                 self.conversations.push(conv);
                 self.active_conversation = self.conversations.len() - 1;
                 self.view = View::Chat;
@@ -756,7 +765,7 @@ impl ChatApp {
             Message::DeleteConversation(idx) => {
                 if self.conversations.len() <= 1 { return Task::none(); }
                 let conv = &self.conversations[idx];
-                crate::db::delete_conversation(&self.db, &conv.id);
+                Self::handle_db_result(&mut self.error_message,crate::db::delete_conversation(&self.db, &conv.id));
                 self.conversations.remove(idx);
                 if self.active_conversation >= self.conversations.len() {
                     self.active_conversation = self.conversations.len() - 1;
@@ -794,7 +803,8 @@ impl ChatApp {
                     if !new_title.is_empty() && idx < self.conversations.len() {
                         self.conversations[idx].title = new_title;
                         let id = self.conversations[idx].id.clone();
-                        crate::db::rename_conversation(&self.db, &id, &self.conversations[idx].title);
+                        let title = self.conversations[idx].title.clone();
+                        Self::handle_db_result(&mut self.error_message,crate::db::rename_conversation(&self.db, &id, &title));
                     }
                 }
                 self.rename_value.clear();
@@ -806,20 +816,23 @@ impl ChatApp {
             }
             Message::RetryMessage => {
                 if self.is_active_conv_streaming() { return Task::none(); }
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 let retry_model = conv.messages.last()
                     .filter(|m| m.role == Role::Assistant)
                     .and_then(|m| m.model.clone())
                     .unwrap_or_else(|| self.selected_model.clone());
                 if let Some(last) = conv.messages.last() { if last.role == Role::Assistant { conv.messages.pop(); } }
                 if conv.messages.is_empty() { return Task::none(); }
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.last_latency_ms = None;
                 self.start_stream(&retry_model)
             }
             Message::DeleteMessage(idx) => {
-                let conv = &mut self.conversations[self.active_conversation];
-                if idx < conv.messages.len() { conv.messages.remove(idx); crate::db::save_conversation(&self.db, conv); }
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
+                if idx < conv.messages.len() {
+                    conv.messages.remove(idx);
+                    Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
+                }
                 Task::none()
             }
             Message::ToggleModelPicker => { self.model_picker_open = !self.model_picker_open; Task::none() }
@@ -835,14 +848,14 @@ impl ChatApp {
             Message::ReviewWith(model_id) => {
                 let review_idx = self.review_picker.take();
                 if self.is_active_conv_streaming() { return Task::none(); }
-                let conv = &self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
                 let review_content = review_idx.and_then(|idx| conv.messages.get(idx))
                     .filter(|m| m.role == Role::Assistant).map(|m| m.content.clone()).unwrap_or_default();
                 if review_content.is_empty() { return Task::none(); }
                 let prompt = format!("[Review request]\nPlease review the following response and provide feedback, corrections, or improvements:\n\n{}", review_content);
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.add_user_message(&prompt, Some(model_id.clone()));
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.last_latency_ms = None;
                 self.start_stream(&model_id)
             }
@@ -866,9 +879,9 @@ impl ChatApp {
                     formatted.push_str("\n\n");
                 }
                 formatted.push_str("Please analyze this conversation. Summarize the key points, identify any errors or areas for improvement, and provide your assessment.");
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.add_user_message(&formatted, Some(model_id.clone()));
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.last_latency_ms = None;
                 self.start_stream(&model_id)
             }
@@ -878,18 +891,21 @@ impl ChatApp {
                 if idx < self.conversations.len() {
                     self.conversations[idx].pinned = !self.conversations[idx].pinned;
                     let id = self.conversations[idx].id.clone();
-                    crate::db::toggle_pin(&self.db, &id, self.conversations[idx].pinned);
+                    let pinned = self.conversations[idx].pinned;
+                    Self::handle_db_result(&mut self.error_message,crate::db::toggle_pin(&self.db, &id, pinned));
                     // Re-sort: pinned first, then by original order
-                    let active_id = self.conversations[self.active_conversation].id.clone();
+                    let active_id = self.conversations.get(self.active_conversation).map(|c| c.id.clone()).unwrap_or_default();
                     self.conversations.sort_by(|a, b| b.pinned.cmp(&a.pinned));
                     self.active_conversation = self.conversations.iter().position(|c| c.id == active_id).unwrap_or(0);
                 }
                 Task::none()
             }
             Message::RemoveTag(tag) => {
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.tags.retain(|t| t != &tag);
-                crate::db::set_tags(&self.db, &conv.id, &conv.tags);
+                let id = conv.id.clone();
+                let tags = conv.tags.clone();
+                Self::handle_db_result(&mut self.error_message,crate::db::set_tags(&self.db, &id, &tags));
                 Task::none()
             }
             Message::ToggleTagInput => { self.tag_input_open = !self.tag_input_open; self.tag_input_value.clear(); Task::none() }
@@ -899,10 +915,12 @@ impl ChatApp {
                 self.tag_input_value.clear();
                 self.tag_input_open = false;
                 if !tag.is_empty() {
-                    let conv = &mut self.conversations[self.active_conversation];
+                    let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                     if !conv.tags.contains(&tag) {
                         conv.tags.push(tag);
-                        crate::db::set_tags(&self.db, &conv.id, &conv.tags);
+                        let id = conv.id.clone();
+                        let tags = conv.tags.clone();
+                        Self::handle_db_result(&mut self.error_message,crate::db::set_tags(&self.db, &id, &tags));
                     }
                 }
                 Task::none()
@@ -988,10 +1006,11 @@ impl ChatApp {
             // Sidebar search
             Message::SidebarSearchChanged(query) => {
                 self.sidebar_search_query = query.clone();
-                if query.trim().is_empty() {
+                let trimmed = query.trim();
+                if trimmed.is_empty() {
                     self.sidebar_search_results = None;
-                } else {
-                    self.sidebar_search_results = Some(crate::db::search_conversations(&self.db, &query));
+                } else if trimmed.len() >= 2 {
+                    self.sidebar_search_results = Some(crate::db::search_conversations(&self.db, trimmed));
                 }
                 Task::none()
             }
@@ -1002,15 +1021,15 @@ impl ChatApp {
             }
             // Export
             Message::ExportMarkdown => {
-                let conv = &self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
                 let md = crate::export::conversation_to_markdown(conv);
                 iced::clipboard::write(md)
             }
             // Forking
             Message::ForkConversation(msg_idx) => {
-                let conv = &self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
                 let forked = conv.fork(msg_idx);
-                crate::db::save_conversation(&self.db, &forked);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, &forked));
                 self.conversations.push(forked);
                 self.active_conversation = self.conversations.len() - 1;
                 self.view = View::Chat;
@@ -1020,27 +1039,29 @@ impl ChatApp {
             Message::ToggleConvSystemPrompt => {
                 self.conv_system_prompt_open = !self.conv_system_prompt_open;
                 if self.conv_system_prompt_open {
-                    self.conv_system_prompt_value = self.conversations[self.active_conversation].system_prompt.clone();
+                    if let Some(conv) = self.conversations.get(self.active_conversation) {
+                        self.conv_system_prompt_value = conv.system_prompt.clone();
+                    }
                 }
                 Task::none()
             }
             Message::ConvSystemPromptChanged(v) => { self.conv_system_prompt_value = v; Task::none() }
             Message::SaveConvSystemPrompt => {
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.system_prompt = self.conv_system_prompt_value.trim().to_string();
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 self.conv_system_prompt_open = false;
                 self.conv_system_prompt_value.clear();
                 Task::none()
             }
             // Ratings
             Message::RateMessage(idx, rating) => {
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 if let Some(msg) = conv.messages.get_mut(idx) {
                     msg.rating = if msg.rating == rating { 0 } else { rating }; // toggle
                     let conv_id = conv.id.clone();
                     let new_rating = msg.rating;
-                    crate::db::update_rating(&self.db, &conv_id, idx, new_rating);
+                    Self::handle_db_result(&mut self.error_message,crate::db::update_rating(&self.db, &conv_id, idx, new_rating));
                 }
                 Task::none()
             }
@@ -1083,7 +1104,7 @@ impl ChatApp {
                 if !title.is_empty() {
                     if let Some(ci) = self.conv_index_by_id(&conv_id) {
                         self.conversations[ci].title = title.clone();
-                        crate::db::rename_conversation(&self.db, &conv_id, &title);
+                        Self::handle_db_result(&mut self.error_message,crate::db::rename_conversation(&self.db, &conv_id, &title));
                     }
                 }
                 Task::none()
@@ -1168,18 +1189,17 @@ impl ChatApp {
             }
             // Export HTML/JSON
             Message::ExportHtml => {
-                let conv = &self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
                 let html = crate::export::conversation_to_html(conv);
                 iced::clipboard::write(html)
             }
             Message::ExportJson => {
-                let conv = &self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
                 let json = crate::export::conversation_to_json(conv);
                 iced::clipboard::write(json)
             }
             // Import
             Message::ImportChatGpt => {
-                let _ = &self.db; // import handles DB writes in ImportComplete
                 Task::perform(
                     async {
                         let handle = rfd::AsyncFileDialog::new()
@@ -1191,30 +1211,34 @@ impl ChatApp {
                                 let data = file.read().await;
                                 let text = String::from_utf8_lossy(&data).to_string();
                                 let convs = crate::import::import_chatgpt(&text);
-                                Some(convs)
+                                if convs.is_empty() { None } else { Some(convs) }
                             }
                             None => None,
                         }
                     },
                     |result| match result {
-                        Some(convs) if !convs.is_empty() => {
-                            // We'll store convs temporarily - need to handle via message
-                            Message::ImportComplete(convs.len())
-                        }
-                        _ => Message::DismissError,
+                        Some(convs) => Message::ImportComplete(convs),
+                        None => Message::DismissError,
                     },
                 )
             }
-            Message::ImportComplete(_count) => {
-                // For now, re-import inline (the async handler above can't easily pass data)
-                // Users should use the import flow which writes to DB
+            Message::ImportComplete(convs) => {
+                let count = convs.len();
+                for conv in convs {
+                    Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, &conv));
+                    self.conversations.push(conv);
+                }
+                if count > 0 {
+                    self.active_conversation = self.conversations.len() - 1;
+                    self.view = View::Chat;
+                }
                 Task::none()
             }
             // Folders
             Message::SetFolder(folder) => {
-                let conv = &mut self.conversations[self.active_conversation];
+                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 conv.folder = folder;
-                crate::db::save_conversation(&self.db, conv);
+                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
                 Task::none()
             }
             Message::DismissError => { self.error_message = None; Task::none() }

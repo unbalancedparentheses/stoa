@@ -1,19 +1,4 @@
-mod api;
-mod app;
-mod config;
-mod cost;
-mod db;
-mod diff;
-mod commands;
-mod export;
-mod import;
-mod model;
-mod shortcuts;
-mod web_search;
-mod theme;
-mod ui;
-
-use app::ChatApp;
+use stoa::app::ChatApp;
 
 fn main() -> iced::Result {
     eprintln!("[stoa] starting...");

@@ -110,66 +110,89 @@ pub fn load_all(conn: &Connection) -> Vec<Conversation> {
         .collect()
 }
 
-pub fn save_conversation(conn: &Connection, conv: &Conversation) {
-    conn.execute(
-        "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, system_prompt, forked_from, folder, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
-        params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32, conv.system_prompt, conv.forked_from, conv.folder],
-    ).ok();
+pub fn save_conversation(conn: &Connection, conv: &Conversation) -> Result<(), String> {
+    conn.execute_batch("BEGIN IMMEDIATE").map_err(|e| format!("Failed to begin transaction: {e}"))?;
 
-    conn.execute(
-        "DELETE FROM messages WHERE conversation_id = ?1",
-        params![conv.id],
-    ).ok();
+    let result = (|| -> Result<(), String> {
+        conn.execute(
+            "INSERT OR REPLACE INTO conversations (id, title, tags, pinned, system_prompt, forked_from, folder, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+            params![conv.id, conv.title, conv.tags.join(","), conv.pinned as i32, conv.system_prompt, conv.forked_from, conv.folder],
+        ).map_err(|e| format!("Failed to save conversation: {e}"))?;
 
-    let mut stmt = conn
-        .prepare("INSERT INTO messages (conversation_id, role, content, model, token_count, rating, latency_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
-        .expect("failed to prepare insert");
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            params![conv.id],
+        ).map_err(|e| format!("Failed to clear messages: {e}"))?;
 
-    for msg in &conv.messages {
-        if msg.streaming {
-            continue;
+        let mut stmt = conn
+            .prepare("INSERT INTO messages (conversation_id, role, content, model, token_count, rating, latency_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
+            .map_err(|e| format!("Failed to prepare insert: {e}"))?;
+
+        for msg in &conv.messages {
+            if msg.streaming {
+                continue;
+            }
+            let role_str = match msg.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+            };
+            stmt.execute(params![conv.id, role_str, msg.content, msg.model, msg.token_count, msg.rating as i32, msg.latency_ms])
+                .map_err(|e| format!("Failed to insert message: {e}"))?;
         }
-        let role_str = match msg.role {
-            Role::User => "user",
-            Role::Assistant => "assistant",
-        };
-        stmt.execute(params![conv.id, role_str, msg.content, msg.model, msg.token_count, msg.rating as i32, msg.latency_ms]).ok();
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT").map_err(|e| format!("Failed to commit: {e}"))?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
     }
 }
 
-pub fn update_rating(conn: &Connection, conv_id: &str, msg_index: usize, rating: i8) {
-    // Get the message's rowid by position
+pub fn update_rating(conn: &Connection, conv_id: &str, msg_index: usize, rating: i8) -> Result<(), String> {
     let mut stmt = conn.prepare(
         "SELECT id FROM messages WHERE conversation_id = ?1 ORDER BY id LIMIT 1 OFFSET ?2"
-    ).expect("rating query failed");
-    if let Ok(msg_id) = stmt.query_row(params![conv_id, msg_index], |row| row.get::<_, i64>(0)) {
-        conn.execute("UPDATE messages SET rating = ?1 WHERE id = ?2", params![rating as i32, msg_id]).ok();
-    }
+    ).map_err(|e| format!("Failed to prepare rating query: {e}"))?;
+    let msg_id = stmt.query_row(params![conv_id, msg_index], |row| row.get::<_, i64>(0))
+        .map_err(|e| format!("Failed to find message for rating: {e}"))?;
+    conn.execute("UPDATE messages SET rating = ?1 WHERE id = ?2", params![rating as i32, msg_id])
+        .map_err(|e| format!("Failed to update rating: {e}"))?;
+    Ok(())
 }
 
-pub fn delete_conversation(conn: &Connection, id: &str) {
-    conn.execute("DELETE FROM conversations WHERE id = ?1", params![id]).ok();
+pub fn delete_conversation(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])
+        .map_err(|e| format!("Failed to delete conversation: {e}"))?;
+    Ok(())
 }
 
-pub fn rename_conversation(conn: &Connection, id: &str, title: &str) {
+pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> Result<(), String> {
     conn.execute(
         "UPDATE conversations SET title = ?1 WHERE id = ?2",
         params![title, id],
-    ).ok();
+    ).map_err(|e| format!("Failed to rename conversation: {e}"))?;
+    Ok(())
 }
 
-pub fn toggle_pin(conn: &Connection, id: &str, pinned: bool) {
+pub fn toggle_pin(conn: &Connection, id: &str, pinned: bool) -> Result<(), String> {
     conn.execute(
         "UPDATE conversations SET pinned = ?1 WHERE id = ?2",
         params![pinned as i32, id],
-    ).ok();
+    ).map_err(|e| format!("Failed to toggle pin: {e}"))?;
+    Ok(())
 }
 
-pub fn set_tags(conn: &Connection, id: &str, tags: &[String]) {
+pub fn set_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(), String> {
     conn.execute(
         "UPDATE conversations SET tags = ?1 WHERE id = ?2",
         params![tags.join(","), id],
-    ).ok();
+    ).map_err(|e| format!("Failed to set tags: {e}"))?;
+    Ok(())
 }
 
 pub fn search_conversations(conn: &Connection, query: &str) -> Vec<String> {
@@ -210,7 +233,7 @@ fn migrate_from_json(conn: &Connection) {
             if entry.path().extension().is_some_and(|e| e == "json") {
                 if let Ok(data) = std::fs::read_to_string(entry.path()) {
                     if let Ok(conv) = serde_json::from_str::<Conversation>(&data) {
-                        save_conversation(conn, &conv);
+                        let _ = save_conversation(conn, &conv);
                     }
                 }
             }

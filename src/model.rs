@@ -148,6 +148,14 @@ impl Conversation {
         }
     }
 
+    pub fn append_streaming_token(&mut self, index: usize, token: &str) {
+        if let Some(msg) = self.messages.get_mut(index) {
+            if msg.role == Role::Assistant && msg.streaming {
+                msg.content.push_str(token);
+            }
+        }
+    }
+
     pub fn finalize_at(&mut self, index: usize, content: &str) {
         if let Some(msg) = self.messages.get_mut(index) {
             if msg.role == Role::Assistant {

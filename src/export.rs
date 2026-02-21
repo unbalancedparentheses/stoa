@@ -1,5 +1,13 @@
 use crate::model::{Conversation, Role};
 
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 pub fn conversation_to_markdown(conv: &Conversation) -> String {
     let mut md = format!("# {}\n\n", conv.title);
     if !conv.tags.is_empty() {
@@ -24,6 +32,7 @@ pub fn conversation_to_json(conv: &Conversation) -> String {
 }
 
 pub fn conversation_to_html(conv: &Conversation) -> String {
+    let title = escape_html(&conv.title);
     let mut html = format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -44,10 +53,11 @@ hr {{ border: none; border-top: 1px solid #1e2834; margin: 16px 0; }}
 </head>
 <body>
 <h1>{title}</h1>
-"#, title = conv.title);
+"#);
 
     if !conv.tags.is_empty() {
-        html.push_str(&format!("<p class=\"tags\">Tags: {}</p>\n", conv.tags.join(", ")));
+        let tags_escaped: Vec<String> = conv.tags.iter().map(|t| escape_html(t)).collect();
+        html.push_str(&format!("<p class=\"tags\">Tags: {}</p>\n", tags_escaped.join(", ")));
     }
 
     for msg in &conv.messages {
@@ -55,11 +65,11 @@ hr {{ border: none; border-top: 1px solid #1e2834; margin: 16px 0; }}
         let (class, label) = match msg.role {
             Role::User => ("user", "You".to_string()),
             Role::Assistant => ("assistant", match &msg.model {
-                Some(m) => format!("Assistant ({m})"),
+                Some(m) => format!("Assistant ({})", escape_html(m)),
                 None => "Assistant".to_string(),
             }),
         };
-        let escaped = msg.content.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let escaped = escape_html(&msg.content);
         let mut meta_parts = Vec::new();
         if let Some(tokens) = msg.token_count {
             meta_parts.push(format!("{tokens} tokens"));

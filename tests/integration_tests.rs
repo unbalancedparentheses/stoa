@@ -473,7 +473,7 @@ fn db_roundtrip_conversation() {
         images: Vec::new(),
     });
 
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
     let loaded = stoa::db::load_all(&conn);
 
     assert_eq!(loaded.len(), 1);
@@ -494,10 +494,10 @@ fn db_roundtrip_conversation() {
 fn db_delete_conversation() {
     let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
     assert_eq!(stoa::db::load_all(&conn).len(), 1);
 
-    stoa::db::delete_conversation(&conn, &conv.id);
+    stoa::db::delete_conversation(&conn, &conv.id).unwrap();
     assert_eq!(stoa::db::load_all(&conn).len(), 0);
 }
 
@@ -505,9 +505,9 @@ fn db_delete_conversation() {
 fn db_rename_conversation() {
     let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
-    stoa::db::rename_conversation(&conn, &conv.id, "Renamed");
+    stoa::db::rename_conversation(&conn, &conv.id, "Renamed").unwrap();
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].title, "Renamed");
 }
@@ -516,13 +516,13 @@ fn db_rename_conversation() {
 fn db_toggle_pin() {
     let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
-    stoa::db::toggle_pin(&conn, &conv.id, true);
+    stoa::db::toggle_pin(&conn, &conv.id, true).unwrap();
     let loaded = stoa::db::load_all(&conn);
     assert!(loaded[0].pinned);
 
-    stoa::db::toggle_pin(&conn, &conv.id, false);
+    stoa::db::toggle_pin(&conn, &conv.id, false).unwrap();
     let loaded = stoa::db::load_all(&conn);
     assert!(!loaded[0].pinned);
 }
@@ -531,9 +531,9 @@ fn db_toggle_pin() {
 fn db_set_tags() {
     let conn = stoa::db::open_in_memory();
     let conv = Conversation::new();
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
-    stoa::db::set_tags(&conn, &conv.id, &["alpha".to_string(), "beta".to_string()]);
+    stoa::db::set_tags(&conn, &conv.id, &["alpha".to_string(), "beta".to_string()]).unwrap();
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].tags, vec!["alpha", "beta"]);
 }
@@ -545,12 +545,12 @@ fn db_search_conversations() {
     let mut conv1 = Conversation::new();
     conv1.title = "Physics Research".to_string();
     conv1.add_user_message("What is quantum entanglement?", None);
-    stoa::db::save_conversation(&conn, &conv1);
+    stoa::db::save_conversation(&conn, &conv1).unwrap();
 
     let mut conv2 = Conversation::new();
     conv2.title = "Cooking Tips".to_string();
     conv2.add_user_message("How to make pasta?", None);
-    stoa::db::save_conversation(&conn, &conv2);
+    stoa::db::save_conversation(&conn, &conv2).unwrap();
 
     // Search by title
     let results = stoa::db::search_conversations(&conn, "Physics");
@@ -577,12 +577,12 @@ fn db_pinned_sort_first() {
 
     let mut conv1 = Conversation::new();
     conv1.title = "Unpinned".to_string();
-    stoa::db::save_conversation(&conn, &conv1);
+    stoa::db::save_conversation(&conn, &conv1).unwrap();
 
     let mut conv2 = Conversation::new();
     conv2.title = "Pinned".to_string();
     conv2.pinned = true;
-    stoa::db::save_conversation(&conn, &conv2);
+    stoa::db::save_conversation(&conn, &conv2).unwrap();
 
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].title, "Pinned");
@@ -598,7 +598,7 @@ fn db_skips_streaming_messages() {
     conv.update_streaming_at(1, "partial response...");
     // Message at index 1 is still streaming
 
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
     let loaded = stoa::db::load_all(&conn);
     // Streaming message should not be persisted
     assert_eq!(loaded[0].messages.len(), 1);
@@ -610,7 +610,7 @@ fn db_forked_from_persists() {
     let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.forked_from = Some("parent-id-123".to_string());
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].forked_from, Some("parent-id-123".to_string()));
@@ -621,7 +621,7 @@ fn db_system_prompt_persists() {
     let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.system_prompt = "You are a helpful assistant".to_string();
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].system_prompt, "You are a helpful assistant");
@@ -703,7 +703,7 @@ fn db_folder_persists() {
     let conn = stoa::db::open_in_memory();
     let mut conv = Conversation::new();
     conv.folder = Some("research".to_string());
-    stoa::db::save_conversation(&conn, &conv);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
 
     let loaded = stoa::db::load_all(&conn);
     assert_eq!(loaded[0].folder, Some("research".to_string()));

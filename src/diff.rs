@@ -5,10 +5,21 @@ pub enum DiffSegment {
     OnlyB(String),
 }
 
+/// Maximum words for full LCS diff (prevents memory explosion).
+const MAX_DIFF_WORDS: usize = 2000;
+
 /// Word-level diff using LCS (longest common subsequence).
 pub fn word_diff(a: &str, b: &str) -> Vec<DiffSegment> {
     let words_a: Vec<&str> = a.split_whitespace().collect();
     let words_b: Vec<&str> = b.split_whitespace().collect();
+
+    // Guard against memory explosion: O(n*m) table
+    if words_a.len() > MAX_DIFF_WORDS || words_b.len() > MAX_DIFF_WORDS {
+        return vec![
+            DiffSegment::OnlyA(words_a.join(" ")),
+            DiffSegment::OnlyB(words_b.join(" ")),
+        ];
+    }
 
     let n = words_a.len();
     let m = words_b.len();
@@ -77,6 +88,11 @@ pub fn agreement_percentage(a: &str, b: &str) -> f32 {
     let total = words_a.len().max(words_b.len()) as f32;
     if total == 0.0 {
         return 100.0;
+    }
+
+    // Guard against memory explosion
+    if words_a.len() > MAX_DIFF_WORDS || words_b.len() > MAX_DIFF_WORDS {
+        return 0.0;
     }
 
     let n = words_a.len();

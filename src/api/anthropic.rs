@@ -1,8 +1,6 @@
 use futures::Stream;
 use reqwest_eventsource::{Event, EventSource};
 use std::pin::Pin;
-use std::time::Duration;
-
 use crate::api::{LlmEvent, TokenUsage};
 use crate::model::{ChatMessage, ProviderConfig, Role};
 
@@ -34,6 +32,7 @@ fn to_anthropic_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
 }
 
 pub fn stream(
+    client: reqwest::Client,
     config: ProviderConfig,
     messages: Vec<ChatMessage>,
     system_prompt: Option<String>,
@@ -45,11 +44,6 @@ pub fn stream(
             yield LlmEvent::Error("Anthropic API key not set. Go to Settings to configure.".into());
             return;
         }
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_default();
 
         let mut body = serde_json::json!({
             "model": config.model,
