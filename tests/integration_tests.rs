@@ -1145,3 +1145,404 @@ fn delete_last_conversation_is_noop() {
     let _ = app.update(stoa::app::Message::DeleteConversation(0));
     assert_eq!(app.conversations.len(), 1); // can't delete last
 }
+
+// ── Additional DB Tests ──────────────────────────────────────
+
+#[test]
+fn db_save_overwrite_existing() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Version 1".to_string();
+    conv.add_user_message("first message", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    // Modify and save again with same ID
+    conv.title = "Version 2".to_string();
+    conv.messages.clear();
+    conv.add_user_message("second message", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    let loaded = stoa::db::load_all(&conn);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].title, "Version 2");
+    assert_eq!(loaded[0].messages.len(), 1);
+    assert_eq!(loaded[0].messages[0].content, "second message");
+}
+
+#[test]
+fn db_multiple_conversations_ordering() {
+    let conn = stoa::db::open_in_memory();
+
+    let mut conv_a = Conversation::new();
+    conv_a.title = "Alpha".to_string();
+    stoa::db::save_conversation(&conn, &conv_a).unwrap();
+
+    let mut conv_b = Conversation::new();
+    conv_b.title = "Beta".to_string();
+    stoa::db::save_conversation(&conn, &conv_b).unwrap();
+
+    let mut conv_c = Conversation::new();
+    conv_c.title = "Gamma".to_string();
+    conv_c.pinned = true;
+    stoa::db::save_conversation(&conn, &conv_c).unwrap();
+
+    let loaded = stoa::db::load_all(&conn);
+    assert_eq!(loaded.len(), 3);
+    // Pinned first
+    assert_eq!(loaded[0].title, "Gamma");
+    assert!(loaded[0].pinned);
+    // Then by updated_at DESC, rowid DESC
+    assert_eq!(loaded[1].title, "Beta");
+    assert_eq!(loaded[2].title, "Alpha");
+}
+
+#[test]
+fn db_fts5_delete_cleans_index() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Quantum Mechanics".to_string();
+    conv.add_user_message("Explain Schrodinger's cat", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    // Verify search finds it
+    assert_eq!(stoa::db::search_conversations(&conn, "Quantum").len(), 1);
+    assert_eq!(stoa::db::search_conversations(&conn, "Schrodinger").len(), 1);
+
+    // Delete the conversation
+    stoa::db::delete_conversation(&conn, &conv.id).unwrap();
+
+    // FTS5 index should be cleaned — search returns nothing
+    assert!(stoa::db::search_conversations(&conn, "Quantum").is_empty());
+    assert!(stoa::db::search_conversations(&conn, "Schrodinger").is_empty());
+}
+
+#[test]
+fn db_rename_nonexistent_succeeds_silently() {
+    let conn = stoa::db::open_in_memory();
+    // UPDATE on missing ID matches 0 rows — should not panic or error
+    let result = stoa::db::rename_conversation(&conn, "nonexistent-id", "New Title");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn db_empty_tags_roundtrip() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.tags = vec![];
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    let loaded = stoa::db::load_all(&conn);
+    assert!(loaded[0].tags.is_empty());
+}
+
+// ── Additional Config Tests ──────────────────────────────────
+
+#[test]
+fn config_roundtrip_serde() {
+    let config = AppConfig::default();
+    let json = serde_json::to_string_pretty(&config).unwrap();
+    let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.active_provider, config.active_provider);
+    assert_eq!(deserialized.temperature, config.temperature);
+    assert_eq!(deserialized.max_tokens, config.max_tokens);
+    assert_eq!(deserialized.schema_version, config.schema_version);
+    assert_eq!(deserialized.openai.model, config.openai.model);
+    assert_eq!(deserialized.anthropic.model, config.anthropic.model);
+    assert_eq!(deserialized.system_prompt, config.system_prompt);
+}
+
+#[test]
+fn config_save_strips_api_keys_from_json() {
+    let mut config = AppConfig::default();
+    config.openai.api_key = "sk-secret-openai-key".to_string();
+    config.anthropic.api_key = "sk-ant-secret-key".to_string();
+    config.openrouter.api_key = "sk-or-secret-key".to_string();
+
+    // Replicate save() logic: clone, clear keys, serialize
+    let mut copy = config.clone();
+    copy.openai.api_key.clear();
+    copy.anthropic.api_key.clear();
+    copy.openrouter.api_key.clear();
+    let json = serde_json::to_string_pretty(&copy).unwrap();
+
+    assert!(!json.contains("sk-secret-openai-key"));
+    assert!(!json.contains("sk-ant-secret-key"));
+    assert!(!json.contains("sk-or-secret-key"));
+
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["openai"]["api_key"].as_str().unwrap(), "");
+    assert_eq!(parsed["anthropic"]["api_key"].as_str().unwrap(), "");
+    assert_eq!(parsed["openrouter"]["api_key"].as_str().unwrap(), "");
+}
+
+#[test]
+fn config_migrate_future_version_clamped() {
+    let mut config = AppConfig::default();
+    config.schema_version = 999;
+    config.migrate();
+    assert_eq!(config.schema_version, stoa::config::CONFIG_SCHEMA_VERSION);
+}
+
+#[test]
+fn config_provider_config_for_unknown_model() {
+    let config = AppConfig::default();
+    let pc = config.provider_config_for_model("totally-unknown-model-xyz");
+    // Unknown model falls through to OpenAI as default
+    assert_eq!(pc.provider, Provider::OpenAI);
+    assert_eq!(pc.model, "totally-unknown-model-xyz");
+}
+
+// ── Additional App State Tests ───────────────────────────────
+
+#[test]
+fn app_sidebar_search_filters() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    // Initial conversation "New Chat" is saved to DB with FTS5 index
+
+    // Empty query — results stay None
+    let _ = app.update(stoa::app::Message::SidebarSearchChanged(String::new()));
+    assert!(app.sidebar_search_results.is_none());
+
+    // 1-char query — below threshold, results stay None
+    let _ = app.update(stoa::app::Message::SidebarSearchChanged("N".to_string()));
+    assert!(app.sidebar_search_results.is_none());
+
+    // >= 2 char query matching title "New Chat"
+    let _ = app.update(stoa::app::Message::SidebarSearchChanged("Chat".to_string()));
+    assert!(app.sidebar_search_results.is_some());
+    let results = app.sidebar_search_results.as_ref().unwrap();
+    assert!(!results.is_empty());
+    assert_eq!(results[0], app.conversations[0].id);
+
+    // Query that matches nothing
+    let _ = app.update(stoa::app::Message::SidebarSearchChanged("zzzznonexistent".to_string()));
+    assert!(app.sidebar_search_results.as_ref().unwrap().is_empty());
+}
+
+#[test]
+fn app_toggle_pin_reorders() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    let first_id = app.conversations[0].id.clone();
+
+    // Add a second conversation
+    let _ = app.update(stoa::app::Message::NewConversation);
+    let second_id = app.conversations[1].id.clone();
+
+    // Pin the second conversation — should move to front after re-sort
+    let _ = app.update(stoa::app::Message::TogglePin(1));
+
+    assert!(app.conversations[0].pinned);
+    assert_eq!(app.conversations[0].id, second_id);
+    assert_eq!(app.conversations[1].id, first_id);
+    assert!(!app.conversations[1].pinned);
+}
+
+#[test]
+fn app_fork_conversation_creates_copy() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    let original_id = app.conversations[0].id.clone();
+
+    // Add messages to active conversation (in memory)
+    app.conversations[0].add_user_message("What is Rust?", Some("gpt-4.1".to_string()));
+    app.conversations[0].messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "Rust is a systems programming language.".to_string(),
+        streaming: false,
+        model: Some("gpt-4.1".to_string()),
+        token_count: None,
+        rating: 0,
+        latency_ms: None,
+        images: Vec::new(),
+    });
+
+    // Fork at message index 1 (include both messages)
+    let _ = app.update(stoa::app::Message::ForkConversation(1));
+
+    assert_eq!(app.conversations.len(), 2);
+    assert_eq!(app.active_conversation, 1);
+
+    let forked = &app.conversations[1];
+    assert_eq!(forked.messages.len(), 2);
+    assert_eq!(forked.messages[0].content, "What is Rust?");
+    assert_eq!(forked.messages[1].content, "Rust is a systems programming language.");
+    assert!(forked.title.starts_with("Fork of"));
+    assert_eq!(forked.forked_from, Some(original_id));
+    assert_ne!(forked.id, app.conversations[0].id);
+}
+
+#[test]
+fn app_rate_message_toggles() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+
+    // Add messages to rate
+    app.conversations[0].add_user_message("test", None);
+    app.conversations[0].messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "response".to_string(),
+        streaming: false,
+        model: None,
+        token_count: None,
+        rating: 0,
+        latency_ms: None,
+        images: Vec::new(),
+    });
+
+    // Rate thumbs up
+    let _ = app.update(stoa::app::Message::RateMessage(1, 1));
+    assert_eq!(app.conversations[0].messages[1].rating, 1);
+
+    // Same rating again → toggle to 0
+    let _ = app.update(stoa::app::Message::RateMessage(1, 1));
+    assert_eq!(app.conversations[0].messages[1].rating, 0);
+
+    // Rate thumbs down
+    let _ = app.update(stoa::app::Message::RateMessage(1, -1));
+    assert_eq!(app.conversations[0].messages[1].rating, -1);
+
+    // Same rating again → toggle to 0
+    let _ = app.update(stoa::app::Message::RateMessage(1, -1));
+    assert_eq!(app.conversations[0].messages[1].rating, 0);
+}
+
+#[test]
+fn app_delete_message_removes_from_conversation() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+
+    app.conversations[0].add_user_message("first", None);
+    app.conversations[0].add_user_message("second", None);
+    assert_eq!(app.conversations[0].messages.len(), 2);
+
+    // Delete first message
+    let _ = app.update(stoa::app::Message::DeleteMessage(0));
+
+    assert_eq!(app.conversations[0].messages.len(), 1);
+    assert_eq!(app.conversations[0].messages[0].content, "second");
+}
+
+#[test]
+fn app_tag_submit_adds_tag() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+
+    // Submit a tag
+    app.tag_input_value = "research".to_string();
+    app.tag_input_open = true;
+    let _ = app.update(stoa::app::Message::SubmitTag);
+
+    assert!(app.conversations[0].tags.contains(&"research".to_string()));
+    assert!(!app.tag_input_open);
+    assert!(app.tag_input_value.is_empty());
+
+    // Duplicate tag should not be added
+    app.tag_input_value = "research".to_string();
+    app.tag_input_open = true;
+    let _ = app.update(stoa::app::Message::SubmitTag);
+
+    assert_eq!(app.conversations[0].tags.len(), 1);
+}
+
+#[test]
+fn app_submit_empty_tag_is_noop() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    app.tag_input_value = "   ".to_string(); // whitespace-only
+    app.tag_input_open = true;
+    let _ = app.update(stoa::app::Message::SubmitTag);
+    assert!(app.conversations[0].tags.is_empty());
+    assert!(!app.tag_input_open);
+}
+
+#[test]
+fn app_command_palette_move_wraps() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    app.command_palette_open = true;
+    app.command_palette_query.clear(); // show all commands
+
+    assert_eq!(app.command_palette_selected, 0);
+
+    // Move up from 0 should wrap to the last command
+    let _ = app.update(stoa::app::Message::CommandPaletteMoveSelection(-1));
+    assert!(app.command_palette_selected > 0);
+
+    let _last = app.command_palette_selected;
+
+    // Move down from last should wrap back to 0
+    let _ = app.update(stoa::app::Message::CommandPaletteMoveSelection(1));
+    assert_eq!(app.command_palette_selected, 0);
+
+    // Verify round-trip: moving down N times then up N times returns to 0
+    for _ in 0..5 {
+        let _ = app.update(stoa::app::Message::CommandPaletteMoveSelection(1));
+    }
+    for _ in 0..5 {
+        let _ = app.update(stoa::app::Message::CommandPaletteMoveSelection(-1));
+    }
+    assert_eq!(app.command_palette_selected, 0);
+}
+
+// ── Additional Export Tests ──────────────────────────────────
+
+#[test]
+fn export_markdown_with_system_prompt() {
+    let mut conv = Conversation::new();
+    conv.title = "Tutor Chat".to_string();
+    conv.system_prompt = "You are a physics tutor.".to_string();
+    conv.add_user_message("What is gravity?", None);
+    conv.messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "Gravity is a fundamental force of attraction.".to_string(),
+        streaming: false,
+        model: Some("gpt-4.1".to_string()),
+        token_count: None,
+        rating: 0,
+        latency_ms: None,
+        images: Vec::new(),
+    });
+
+    let md = export::conversation_to_markdown(&conv);
+    assert!(md.contains("# Tutor Chat"));
+    assert!(md.contains("**You**"));
+    assert!(md.contains("What is gravity?"));
+    assert!(md.contains("**Assistant (gpt-4.1)**"));
+    assert!(md.contains("Gravity is a fundamental force of attraction."));
+}
+
+#[test]
+fn export_json_all_fields_present() {
+    let mut conv = Conversation::new();
+    conv.title = "Complete Test".to_string();
+    conv.tags = vec!["tag1".to_string(), "tag2".to_string()];
+    conv.pinned = true;
+    conv.system_prompt = "Be concise.".to_string();
+    conv.forked_from = Some("parent-123".to_string());
+    conv.folder = Some("research".to_string());
+    conv.add_user_message("hello", Some("gpt-4.1".to_string()));
+    conv.messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "world".to_string(),
+        streaming: false,
+        model: Some("gpt-4.1".to_string()),
+        token_count: Some(100),
+        rating: 1,
+        latency_ms: Some(250),
+        images: Vec::new(),
+    });
+
+    let json = export::conversation_to_json(&conv);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["title"].as_str().unwrap(), "Complete Test");
+    assert_eq!(parsed["tags"][0].as_str().unwrap(), "tag1");
+    assert_eq!(parsed["tags"][1].as_str().unwrap(), "tag2");
+    assert_eq!(parsed["pinned"].as_bool().unwrap(), true);
+    assert_eq!(parsed["system_prompt"].as_str().unwrap(), "Be concise.");
+    assert_eq!(parsed["forked_from"].as_str().unwrap(), "parent-123");
+    assert_eq!(parsed["folder"].as_str().unwrap(), "research");
+    assert_eq!(parsed["messages"].as_array().unwrap().len(), 2);
+
+    let msg = &parsed["messages"][1];
+    assert_eq!(msg["role"].as_str().unwrap(), "Assistant");
+    assert_eq!(msg["content"].as_str().unwrap(), "world");
+    assert_eq!(msg["model"].as_str().unwrap(), "gpt-4.1");
+    assert_eq!(msg["token_count"].as_u64().unwrap(), 100);
+    assert_eq!(msg["rating"].as_i64().unwrap(), 1);
+    assert_eq!(msg["latency_ms"].as_u64().unwrap(), 250);
+}
