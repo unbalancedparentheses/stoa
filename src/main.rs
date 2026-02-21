@@ -1,7 +1,9 @@
+use log::{info, debug};
 use stoa::app::ChatApp;
 
 fn main() -> iced::Result {
-    eprintln!("[stoa] starting...");
+    env_logger::init();
+    info!("starting...");
 
     let result = iced::application(ChatApp::new, ChatApp::update, ChatApp::view)
         .title("Stoa")
@@ -10,6 +12,6 @@ fn main() -> iced::Result {
         .window_size((1200.0, 800.0))
         .run();
 
-    eprintln!("[stoa] exited with: {result:?}");
+    debug!("exited with: {result:?}");
     result
 }

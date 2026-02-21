@@ -141,7 +141,6 @@ fn render_assistant_message<'a>(
         if msg.content.is_empty() {
             col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
         } else {
-            // Streaming markdown rendering
             col = col.push(markdown::render_markdown(&msg.content));
             col = col.push(text("\u{2022}\u{2022}\u{2022}").size(14).color(ACCENT));
         }
@@ -149,7 +148,10 @@ fn render_assistant_message<'a>(
             col = col.push(button(text("Stop").size(10)).padding([3, 8]).on_press(Message::StopStream(stream_id)).style(stop_stream_style));
         }
     } else {
-        col = col.push(markdown::render_markdown(&msg.content));
+        // Lazy-render finalized markdown: only re-parses when content changes
+        col = col.push(iced::widget::lazy(msg.content.clone(), |content: &String| {
+            markdown::render_markdown(content)
+        }));
     }
 
     if !msg.streaming {

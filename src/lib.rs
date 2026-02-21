@@ -1,5 +1,6 @@
 pub mod api;
 pub mod app;
+mod handlers;
 pub mod commands;
 pub mod config;
 pub mod cost;

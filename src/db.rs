@@ -40,6 +40,15 @@ fn init_schema(conn: &Connection) {
     conn.execute("ALTER TABLE messages ADD COLUMN rating INTEGER DEFAULT 0", []).ok();
     conn.execute("ALTER TABLE messages ADD COLUMN latency_ms INTEGER", []).ok();
     conn.execute("ALTER TABLE conversations ADD COLUMN folder TEXT", []).ok();
+
+    // FTS5 search index
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+            conversation_id UNINDEXED,
+            title,
+            content
+        );"
+    ).ok();
 }
 
 pub fn open() -> Connection {
@@ -55,6 +64,7 @@ pub fn open() -> Connection {
     conn.execute("UPDATE conversations SET updated_at = datetime('now') WHERE updated_at IS NULL", []).ok();
 
     migrate_from_json(&conn);
+    backfill_search_index(&conn);
     conn
 }
 
@@ -145,6 +155,7 @@ pub fn save_conversation(conn: &Connection, conv: &Conversation) -> Result<(), S
     match result {
         Ok(()) => {
             conn.execute_batch("COMMIT").map_err(|e| format!("Failed to commit: {e}"))?;
+            rebuild_search_index(conn, conv);
             Ok(())
         }
         Err(e) => {
@@ -168,6 +179,7 @@ pub fn update_rating(conn: &Connection, conv_id: &str, msg_index: usize, rating:
 pub fn delete_conversation(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM conversations WHERE id = ?1", params![id])
         .map_err(|e| format!("Failed to delete conversation: {e}"))?;
+    conn.execute("DELETE FROM search_index WHERE conversation_id = ?1", params![id]).ok();
     Ok(())
 }
 
@@ -195,7 +207,46 @@ pub fn set_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(), Stri
     Ok(())
 }
 
+fn rebuild_search_index(conn: &Connection, conv: &Conversation) {
+    conn.execute("DELETE FROM search_index WHERE conversation_id = ?1", params![conv.id]).ok();
+    let content: String = conv.messages.iter()
+        .filter(|m| !m.streaming)
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    conn.execute(
+        "INSERT INTO search_index (conversation_id, title, content) VALUES (?1, ?2, ?3)",
+        params![conv.id, conv.title, content],
+    ).ok();
+}
+
 pub fn search_conversations(conn: &Connection, query: &str) -> Vec<String> {
+    // Try FTS5 first, fall back to LIKE for non-FTS queries
+    let fts_query = query.split_whitespace()
+        .map(|w| format!("\"{}\"", w.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if !fts_query.is_empty() {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT s.conversation_id FROM search_index s
+             JOIN conversations c ON c.id = s.conversation_id
+             WHERE search_index MATCH ?1
+             ORDER BY c.pinned DESC, c.updated_at DESC"
+        ).ok();
+
+        if let Some(ref mut stmt) = stmt {
+            let results: Vec<String> = stmt.query_map(params![fts_query], |row| row.get(0))
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default();
+            if !results.is_empty() {
+                return results;
+            }
+        }
+    }
+
+    // Fallback to LIKE
     let pattern = format!("%{query}%");
     let mut stmt = conn.prepare(
         "SELECT DISTINCT c.id FROM conversations c
@@ -208,6 +259,29 @@ pub fn search_conversations(conn: &Connection, query: &str) -> Vec<String> {
         .expect("search failed")
         .filter_map(|r| r.ok())
         .collect()
+}
+
+fn backfill_search_index(conn: &Connection) {
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM search_index", [], |row| row.get(0))
+        .unwrap_or(0);
+    if count > 0 { return; }
+
+    let conv_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+        .unwrap_or(0);
+    if conv_count == 0 { return; }
+
+    // Bulk populate from existing data
+    conn.execute_batch(
+        "INSERT INTO search_index (conversation_id, title, content)
+         SELECT c.id, c.title, COALESCE(GROUP_CONCAT(m.content, ' '), '')
+         FROM conversations c
+         LEFT JOIN messages m ON m.conversation_id = c.id
+         GROUP BY c.id"
+    ).ok();
+
+    log::info!("backfilled FTS5 search index for {conv_count} conversations");
 }
 
 fn migrate_from_json(conn: &Connection) {
@@ -240,5 +314,5 @@ fn migrate_from_json(conn: &Connection) {
         }
     }
 
-    eprintln!("[stoa] migrated JSON conversations to SQLite");
+    log::info!("migrated JSON conversations to SQLite");
 }

@@ -5,72 +5,10 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::config::AppConfig;
-use crate::model::{Conversation, Provider, Role};
+use crate::model::{Conversation, Provider};
 use crate::ui;
 
 pub type StreamId = usize;
-
-/// Generate a short conversation title using the LLM.
-async fn generate_title(client: reqwest::Client, config: crate::model::ProviderConfig, user_msg: String, assistant_msg: String) -> String {
-    let prompt = format!(
-        "Generate a very short title (3-6 words, no quotes) for a conversation that starts with:\nUser: {}\nAssistant: {}",
-        user_msg.chars().take(200).collect::<String>(),
-        assistant_msg.chars().take(200).collect::<String>(),
-    );
-
-    let body = match config.provider {
-        crate::model::Provider::Anthropic => {
-            serde_json::json!({
-                "model": config.model,
-                "max_tokens": 30,
-                "messages": [{"role": "user", "content": prompt}],
-            })
-        }
-        _ => {
-            serde_json::json!({
-                "model": config.model,
-                "max_tokens": 30,
-                "messages": [{"role": "user", "content": prompt}],
-            })
-        }
-    };
-
-    let mut req = client.post(&config.api_url)
-        .header("Content-Type", "application/json");
-
-    match config.provider {
-        crate::model::Provider::Anthropic => {
-            req = req.header("x-api-key", &config.api_key)
-                .header("anthropic-version", "2023-06-01");
-        }
-        crate::model::Provider::Ollama => {}
-        _ => {
-            req = req.header("Authorization", format!("Bearer {}", config.api_key));
-        }
-    }
-
-    let resp = match req.body(body.to_string()).send().await {
-        Ok(r) => r,
-        Err(_) => return String::new(),
-    };
-
-    let json: serde_json::Value = match resp.json().await {
-        Ok(j) => j,
-        Err(_) => return String::new(),
-    };
-
-    // Extract title from response
-    let title = match config.provider {
-        crate::model::Provider::Anthropic => {
-            json["content"][0]["text"].as_str().unwrap_or("").to_string()
-        }
-        _ => {
-            json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string()
-        }
-    };
-
-    title.trim().trim_matches('"').chars().take(50).collect()
-}
 
 #[derive(Debug, Clone)]
 pub enum View {
@@ -104,7 +42,7 @@ pub struct ChatApp {
     // Latency
     pub last_latency_ms: Option<u128>,
     // Database
-    db: Connection,
+    pub(crate) db: Connection,
     // Shared HTTP client
     pub http_client: reqwest::Client,
     // Multi-model
@@ -336,9 +274,9 @@ impl ChatApp {
         self.conversations.get(self.active_conversation)
     }
 
-    fn handle_db_result(error_message: &mut Option<String>, result: Result<(), String>) {
+    pub(crate) fn handle_db_result(error_message: &mut Option<String>, result: Result<(), String>) {
         if let Err(e) = result {
-            eprintln!("[stoa] DB error: {e}");
+            log::error!("DB error: {e}");
             *error_message = Some(e);
         }
     }
@@ -482,53 +420,6 @@ impl ChatApp {
         )
     }
 
-    fn start_stream(&mut self, model_id: &str) -> Task<Message> {
-        self.error_message = None;
-        let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-        let conv_id = conv.id.clone();
-        let msg_index = conv.push_streaming_assistant(Some(model_id.to_string()));
-        let messages = conv.messages.clone();
-        let provider_config = self.config.provider_config_for_model(model_id);
-        // Per-conversation system prompt takes priority over global
-        let system_prompt = if !conv.system_prompt.is_empty() {
-            Some(conv.system_prompt.clone())
-        } else if !self.config.system_prompt.is_empty() {
-            Some(self.config.system_prompt.clone())
-        } else {
-            None
-        };
-        let temperature = self.config.temperature.parse::<f64>().ok();
-        let max_tokens = self.config.max_tokens.parse::<u32>().ok();
-
-        let stream_id = self.next_stream_id;
-        self.next_stream_id += 1;
-
-        let (task, handle) = Task::run(
-            crate::api::stream_completion(self.http_client.clone(), provider_config, messages, system_prompt, temperature, max_tokens),
-            move |event| match event {
-                crate::api::LlmEvent::Token(t) => Message::StreamToken(stream_id, t),
-                crate::api::LlmEvent::Done(_usage) => Message::StreamComplete(stream_id),
-                crate::api::LlmEvent::Error(e) => Message::StreamError(stream_id, e),
-            },
-        ).abortable();
-
-        self.active_streams.insert(stream_id, ActiveStream {
-            model: model_id.to_string(),
-            current_response: String::new(),
-            message_index: msg_index,
-            conversation_id: conv_id,
-            abort_handle: handle,
-            stream_start: Instant::now(),
-            first_token_received: false,
-        });
-        task
-    }
-
-    fn start_multi_stream(&mut self, model_ids: &[String]) -> Task<Message> {
-        let tasks: Vec<Task<Message>> = model_ids.iter().map(|id| self.start_stream(id)).collect();
-        Task::batch(tasks)
-    }
-
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::KeyboardPressed(key, physical_key, modifiers) => {
@@ -552,7 +443,8 @@ impl ChatApp {
                     modifiers.shift(),
                     modifiers.alt(),
                 ));
-                if self.config.debug_key_events {
+                // Only log key events with modifier keys to avoid capturing sensitive typed text
+                if self.config.debug_key_events && (modifiers.command() || modifiers.control() || modifiers.alt()) {
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis())
@@ -575,174 +467,19 @@ impl ChatApp {
                 Task::none()
             }
             Message::InputChanged(value) => { self.input_value = value; Task::none() }
-            Message::SendMessage => {
-                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
-                let mut text = self.input_value.clone();
-                self.input_value.clear();
-                self.error_message = None;
-                self.model_picker_open = false;
-                self.last_latency_ms = None;
-                // Prepend web search context if present
-                if let Some(context) = self.web_search_context.take() {
-                    text = format!("{context}{text}");
-                }
-                // Prepend attached file content if present
-                if let Some(content) = self.attached_file.take() {
-                    let filename = self.attached_filename.take().unwrap_or_default();
-                    text = format!("[Attached file: {filename}]\n```\n{content}\n```\n\n{text}");
-                }
-                let images = std::mem::take(&mut self.attached_images);
-                let model_id = self.selected_model.clone();
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                if images.is_empty() {
-                    conv.add_user_message(&text, Some(model_id.clone()));
-                } else {
-                    conv.add_user_message_with_images(&text, Some(model_id.clone()), images);
-                }
-                if let Some(msg) = conv.messages.last_mut() {
-                    msg.token_count = Some(crate::cost::estimate_tokens(&text));
-                }
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.start_stream(&model_id)
-            }
-            Message::SendToModels(model_ids) => {
-                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() || model_ids.is_empty() { return Task::none(); }
-                let text = self.input_value.clone();
-                self.input_value.clear();
-                self.error_message = None;
-                self.model_picker_open = false;
-                self.last_latency_ms = None;
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                conv.add_user_message(&text, None);
-                if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.start_multi_stream(&model_ids)
-            }
-            Message::SendToAll => {
-                let all_ids: Vec<String> = self.config.all_models().iter().map(|(_, id)| id.clone()).collect();
-                if self.input_value.trim().is_empty() || self.is_active_conv_streaming() { return Task::none(); }
-                let text = self.input_value.clone();
-                self.input_value.clear();
-                self.error_message = None;
-                self.model_picker_open = false;
-                self.last_latency_ms = None;
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                conv.add_user_message(&text, None);
-                if let Some(msg) = conv.messages.last_mut() { msg.token_count = Some(crate::cost::estimate_tokens(&text)); }
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.start_multi_stream(&all_ids)
-            }
+            Message::SendMessage => self.handle_send_message(),
+            Message::SendToModels(model_ids) => self.handle_send_to_models(model_ids),
+            Message::SendToAll => self.handle_send_to_all(),
             Message::ToggleModelSelection(model_id) => {
                 if self.selected_models.contains(&model_id) { self.selected_models.remove(&model_id); }
                 else { self.selected_models.insert(model_id); }
                 Task::none()
             }
-            Message::StreamToken(id, token) => {
-                if let Some(stream) = self.active_streams.get_mut(&id) {
-                    if !stream.first_token_received {
-                        stream.first_token_received = true;
-                        self.last_latency_ms = Some(stream.stream_start.elapsed().as_millis());
-                    }
-                    stream.current_response.push_str(&token);
-                    let idx = stream.message_index;
-                    let conv_id = stream.conversation_id.clone();
-                    if let Some(ci) = self.conv_index_by_id(&conv_id) {
-                        self.conversations[ci].append_streaming_token(idx, &token);
-                    }
-                }
-                Task::none()
-            }
-            Message::StreamComplete(id) => {
-                if let Some(stream) = self.active_streams.remove(&id) {
-                    let latency = if stream.first_token_received {
-                        Some(stream.stream_start.elapsed().as_millis() as u64)
-                    } else {
-                        None
-                    };
-                    // Use first-token latency if we recorded it
-                    let ttfb = self.last_latency_ms.map(|ms| ms as u64);
-
-                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
-                        let conv = &mut self.conversations[ci];
-                        conv.finalize_at(stream.message_index, &stream.current_response);
-                        if let Some(msg) = conv.messages.get_mut(stream.message_index) {
-                            let tokens = crate::cost::estimate_tokens(&msg.content);
-                            msg.token_count = Some(tokens);
-                            msg.latency_ms = ttfb.or(latency);
-                            let cost = crate::cost::message_cost(msg.model.as_deref().unwrap_or(""), &msg.role, tokens);
-                            self.session_cost += cost;
-                        }
-                        // Auto-title: if this is the first assistant message and title looks auto-generated
-                        let should_auto_title = conv.messages.iter().filter(|m| m.role == Role::Assistant && !m.streaming).count() == 1
-                            && conv.title.chars().count() <= 30
-                            && conv.forked_from.is_none();
-
-                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-
-                        if should_auto_title {
-                            let conv_id = conv.id.clone();
-                            let user_msg = conv.messages.iter().find(|m| m.role == Role::User).map(|m| m.content.clone()).unwrap_or_default();
-                            let assistant_msg = stream.current_response.clone();
-                            let model = stream.model.clone();
-                            let provider_config = self.config.provider_config_for_model(&model);
-                            return Task::perform(
-                                generate_title(self.http_client.clone(), provider_config, user_msg, assistant_msg),
-                                move |title| Message::AutoTitleResult(conv_id.clone(), title),
-                            );
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::StreamError(id, err) => {
-                if let Some(stream) = self.active_streams.remove(&id) {
-                    let error_content = format!("[Error: {err}]");
-                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
-                        let conv = &mut self.conversations[ci];
-                        conv.finalize_at(stream.message_index, &error_content);
-                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                    }
-                }
-                self.error_message = Some(err);
-                Task::none()
-            }
-            Message::StopStreaming => {
-                let Some(active_conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
-                let active_conv_id = active_conv.id.clone();
-                let all_streams: HashMap<StreamId, ActiveStream> = std::mem::take(&mut self.active_streams);
-                let mut remaining = HashMap::new();
-                let mut to_finalize = Vec::new();
-                for (id, stream) in all_streams {
-                    if stream.conversation_id == active_conv_id {
-                        stream.abort_handle.abort();
-                        to_finalize.push(stream);
-                    } else {
-                        remaining.insert(id, stream);
-                    }
-                }
-                self.active_streams = remaining;
-                if let Some(ci) = self.conv_index_by_id(&active_conv_id) {
-                    let conv = &mut self.conversations[ci];
-                    for stream in to_finalize {
-                        let content = if stream.current_response.is_empty() { "[stopped]".to_string() } else { stream.current_response };
-                        conv.finalize_at(stream.message_index, &content);
-                    }
-                    Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                }
-                Task::none()
-            }
-            Message::StopStream(id) => {
-                if let Some(stream) = self.active_streams.remove(&id) {
-                    stream.abort_handle.abort();
-                    let content = if stream.current_response.is_empty() { "[stopped]".to_string() } else { stream.current_response };
-                    if let Some(ci) = self.conv_index_by_id(&stream.conversation_id) {
-                        let conv = &mut self.conversations[ci];
-                        conv.finalize_at(stream.message_index, &content);
-                        Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                    }
-                }
-                Task::none()
-            }
+            Message::StreamToken(id, token) => self.handle_stream_token(id, token),
+            Message::StreamComplete(id) => self.handle_stream_complete(id),
+            Message::StreamError(id, err) => self.handle_stream_error(id, err),
+            Message::StopStreaming => self.handle_stop_streaming(),
+            Message::StopStream(id) => self.handle_stop_stream(id),
             Message::SelectConversation(idx) => {
                 if idx < self.conversations.len() {
                     self.active_conversation = idx;
@@ -814,19 +551,7 @@ impl ChatApp {
                 self.dismiss_top_overlay();
                 Task::none()
             }
-            Message::RetryMessage => {
-                if self.is_active_conv_streaming() { return Task::none(); }
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                let retry_model = conv.messages.last()
-                    .filter(|m| m.role == Role::Assistant)
-                    .and_then(|m| m.model.clone())
-                    .unwrap_or_else(|| self.selected_model.clone());
-                if let Some(last) = conv.messages.last() { if last.role == Role::Assistant { conv.messages.pop(); } }
-                if conv.messages.is_empty() { return Task::none(); }
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.last_latency_ms = None;
-                self.start_stream(&retry_model)
-            }
+            Message::RetryMessage => self.handle_retry_message(),
             Message::DeleteMessage(idx) => {
                 let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
                 if idx < conv.messages.len() {
@@ -845,46 +570,12 @@ impl ChatApp {
             }
             Message::ShowReviewPicker(idx) => { self.review_picker = Some(idx); Task::none() }
             Message::DismissReviewPicker => { self.review_picker = None; Task::none() }
-            Message::ReviewWith(model_id) => {
-                let review_idx = self.review_picker.take();
-                if self.is_active_conv_streaming() { return Task::none(); }
-                let Some(conv) = self.conversations.get(self.active_conversation) else { return Task::none() };
-                let review_content = review_idx.and_then(|idx| conv.messages.get(idx))
-                    .filter(|m| m.role == Role::Assistant).map(|m| m.content.clone()).unwrap_or_default();
-                if review_content.is_empty() { return Task::none(); }
-                let prompt = format!("[Review request]\nPlease review the following response and provide feedback, corrections, or improvements:\n\n{}", review_content);
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                conv.add_user_message(&prompt, Some(model_id.clone()));
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.last_latency_ms = None;
-                self.start_stream(&model_id)
-            }
+            Message::ReviewWith(model_id) => self.handle_review_with(model_id),
             Message::AnalyzeConversation(idx) => {
                 if idx < self.conversations.len() { self.analyze_source_conversation = Some(idx); }
                 Task::none()
             }
-            Message::AnalyzeWith(model_id) => {
-                let source_idx = match self.analyze_source_conversation.take() { Some(idx) => idx, None => return Task::none() };
-                if self.is_active_conv_streaming() || source_idx >= self.conversations.len() { return Task::none(); }
-                let source = &self.conversations[source_idx];
-                let mut formatted = format!("[Analyze conversation] Analyzing: \"{}\"\n\n", source.title);
-                for msg in &source.messages {
-                    let role_label = match msg.role {
-                        Role::User => "User",
-                        Role::Assistant => { match &msg.model { Some(m) => { formatted.push_str(&format!("Assistant ({m})")); "" } None => "Assistant" } }
-                    };
-                    if !role_label.is_empty() { formatted.push_str(role_label); }
-                    formatted.push_str(": ");
-                    formatted.push_str(&msg.content);
-                    formatted.push_str("\n\n");
-                }
-                formatted.push_str("Please analyze this conversation. Summarize the key points, identify any errors or areas for improvement, and provide your assessment.");
-                let Some(conv) = self.conversations.get_mut(self.active_conversation) else { return Task::none() };
-                conv.add_user_message(&formatted, Some(model_id.clone()));
-                Self::handle_db_result(&mut self.error_message,crate::db::save_conversation(&self.db, conv));
-                self.last_latency_ms = None;
-                self.start_stream(&model_id)
-            }
+            Message::AnalyzeWith(model_id) => self.handle_analyze_with(model_id),
             Message::DismissAnalyzePicker => { self.analyze_source_conversation = None; Task::none() }
             // Tags + Pins
             Message::TogglePin(idx) => {

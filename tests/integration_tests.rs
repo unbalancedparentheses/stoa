@@ -871,3 +871,277 @@ fn config_migration_sets_current_schema_version() {
     cfg.migrate();
     assert_eq!(cfg.schema_version, stoa::config::CONFIG_SCHEMA_VERSION);
 }
+
+// ── Append Streaming Token Tests ─────────────────────────────
+
+#[test]
+fn append_streaming_token_concatenates() {
+    let mut conv = Conversation::new();
+    conv.add_user_message("hi", None);
+    let idx = conv.push_streaming_assistant(Some("gpt-4.1".to_string()));
+    conv.append_streaming_token(idx, "Hello");
+    conv.append_streaming_token(idx, " world");
+    assert_eq!(conv.messages[idx].content, "Hello world");
+}
+
+#[test]
+fn append_streaming_token_ignores_non_streaming() {
+    let mut conv = Conversation::new();
+    conv.add_user_message("hi", None);
+    let idx = conv.push_streaming_assistant(None);
+    conv.finalize_at(idx, "done");
+    conv.append_streaming_token(idx, "extra");
+    assert_eq!(conv.messages[idx].content, "done");
+}
+
+#[test]
+fn append_streaming_token_out_of_bounds_safe() {
+    let mut conv = Conversation::new();
+    conv.append_streaming_token(999, "nope"); // should not panic
+}
+
+// ── HTML Export XSS Escaping Tests ───────────────────────────
+
+#[test]
+fn export_html_escapes_xss_in_title() {
+    let mut conv = Conversation::new();
+    conv.title = "<script>alert('xss')</script>".to_string();
+    let html = stoa::export::conversation_to_html(&conv);
+    assert!(!html.contains("<script>"));
+    assert!(html.contains("&lt;script&gt;"));
+}
+
+#[test]
+fn export_html_escapes_xss_in_content() {
+    let mut conv = Conversation::new();
+    conv.add_user_message("<img onerror=alert(1) src=x>", None);
+    let html = stoa::export::conversation_to_html(&conv);
+    // The < is escaped, so the tag is rendered as text, not HTML
+    assert!(!html.contains("<img onerror"));
+    assert!(html.contains("&lt;img"));
+}
+
+#[test]
+fn export_html_escapes_tags() {
+    let mut conv = Conversation::new();
+    conv.tags = vec!["<b>bold</b>".to_string()];
+    let html = stoa::export::conversation_to_html(&conv);
+    assert!(!html.contains("<b>bold</b>"));
+    assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
+}
+
+// ── FTS5 Search Tests ────────────────────────────────────────
+
+#[test]
+fn fts5_search_finds_by_content() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Science Chat".to_string();
+    conv.add_user_message("What is photosynthesis?", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    let results = stoa::db::search_conversations(&conn, "photosynthesis");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0], conv.id);
+}
+
+#[test]
+fn fts5_search_finds_by_title() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Quantum Physics Discussion".to_string();
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    let results = stoa::db::search_conversations(&conn, "Quantum");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0], conv.id);
+}
+
+#[test]
+fn fts5_search_no_results() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Random Chat".to_string();
+    conv.add_user_message("hello", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    let results = stoa::db::search_conversations(&conn, "nonexistent");
+    assert!(results.is_empty());
+}
+
+#[test]
+fn fts5_search_updates_after_resave() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.title = "Chat".to_string();
+    conv.add_user_message("hello", None);
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    // Should not find "quantum" yet
+    assert!(stoa::db::search_conversations(&conn, "quantum").is_empty());
+
+    // Add a message and resave
+    conv.messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "quantum mechanics is fascinating".to_string(),
+        streaming: false,
+        model: None,
+        token_count: None,
+        rating: 0,
+        latency_ms: None,
+        images: Vec::new(),
+    });
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    // Now should find it
+    let results = stoa::db::search_conversations(&conn, "quantum");
+    assert_eq!(results.len(), 1);
+}
+
+// ── Diff Guard Tests ─────────────────────────────────────────
+
+#[test]
+fn diff_large_input_returns_fallback() {
+    let large_a = (0..3000).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+    let large_b = (0..3000).map(|i| format!("other{i}")).collect::<Vec<_>>().join(" ");
+    let segments = diff::word_diff(&large_a, &large_b);
+    // Should return simple OnlyA + OnlyB instead of running LCS
+    assert_eq!(segments.len(), 2);
+}
+
+#[test]
+fn agreement_percentage_large_input_returns_zero() {
+    let large_a = (0..3000).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+    let large_b = (0..3000).map(|i| format!("other{i}")).collect::<Vec<_>>().join(" ");
+    assert_eq!(diff::agreement_percentage(&large_a, &large_b), 0.0);
+}
+
+// ── Import ChatGPT with Valid Data ───────────────────────────
+
+#[test]
+fn import_chatgpt_valid_data() {
+    let data = r#"[{
+        "title": "Test Conversation",
+        "mapping": {
+            "node1": {
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Hello!"]},
+                    "create_time": 1700000001.0
+                }
+            },
+            "node2": {
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {"parts": ["Hi there!"]},
+                    "create_time": 1700000002.0,
+                    "metadata": {"model_slug": "gpt-4"}
+                }
+            },
+            "node3": {
+                "message": {
+                    "author": {"role": "system"},
+                    "content": {"parts": ["You are a helpful assistant"]},
+                    "create_time": 1700000000.0
+                }
+            }
+        }
+    }]"#;
+
+    let convs = stoa::import::import_chatgpt(data);
+    assert_eq!(convs.len(), 1);
+    assert_eq!(convs[0].title, "Test Conversation");
+    assert_eq!(convs[0].messages.len(), 2); // system message filtered out
+    assert_eq!(convs[0].messages[0].role, Role::User);
+    assert_eq!(convs[0].messages[0].content, "Hello!");
+    assert_eq!(convs[0].messages[1].role, Role::Assistant);
+    assert_eq!(convs[0].messages[1].content, "Hi there!");
+    assert_eq!(convs[0].messages[1].model, Some("gpt-4".to_string()));
+    assert!(convs[0].tags.contains(&"imported".to_string()));
+}
+
+#[test]
+fn import_chatgpt_skips_empty_content() {
+    let data = r#"[{
+        "title": "Empty Messages",
+        "mapping": {
+            "node1": {
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": [""]},
+                    "create_time": 1700000001.0
+                }
+            }
+        }
+    }]"#;
+
+    let convs = stoa::import::import_chatgpt(data);
+    assert!(convs.is_empty()); // no non-empty messages = no conversation
+}
+
+// ── DB Update Rating Tests ───────────────────────────────────
+
+#[test]
+fn db_update_rating() {
+    let conn = stoa::db::open_in_memory();
+    let mut conv = Conversation::new();
+    conv.add_user_message("hello", None);
+    conv.messages.push(ChatMessage {
+        role: Role::Assistant,
+        content: "hi".to_string(),
+        streaming: false,
+        model: None,
+        token_count: None,
+        rating: 0,
+        latency_ms: None,
+        images: Vec::new(),
+    });
+    stoa::db::save_conversation(&conn, &conv).unwrap();
+
+    stoa::db::update_rating(&conn, &conv.id, 1, 1).unwrap();
+    let loaded = stoa::db::load_all(&conn);
+    assert_eq!(loaded[0].messages[1].rating, 1);
+
+    stoa::db::update_rating(&conn, &conv.id, 1, -1).unwrap();
+    let loaded = stoa::db::load_all(&conn);
+    assert_eq!(loaded[0].messages[1].rating, -1);
+}
+
+// ── App State Tests ──────────────────────────────────────────
+
+#[test]
+fn new_conversation_message_creates_and_selects() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    let initial_count = app.conversations.len();
+    let _ = app.update(stoa::app::Message::NewConversation);
+    assert_eq!(app.conversations.len(), initial_count + 1);
+    assert_eq!(app.active_conversation, app.conversations.len() - 1);
+}
+
+#[test]
+fn select_conversation_bounds_check() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    let _ = app.update(stoa::app::Message::SelectConversation(999));
+    // Should not crash, active_conversation unchanged
+    assert!(app.active_conversation < app.conversations.len());
+}
+
+#[test]
+fn delete_conversation_adjusts_active_index() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    let _ = app.update(stoa::app::Message::NewConversation);
+    let _ = app.update(stoa::app::Message::NewConversation);
+    assert_eq!(app.conversations.len(), 3);
+    app.active_conversation = 2;
+    let _ = app.update(stoa::app::Message::DeleteConversation(0));
+    assert_eq!(app.conversations.len(), 2);
+    assert_eq!(app.active_conversation, 1); // adjusted down
+}
+
+#[test]
+fn delete_last_conversation_is_noop() {
+    let mut app = stoa::app::ChatApp::new_for_tests();
+    assert_eq!(app.conversations.len(), 1);
+    let _ = app.update(stoa::app::Message::DeleteConversation(0));
+    assert_eq!(app.conversations.len(), 1); // can't delete last
+}

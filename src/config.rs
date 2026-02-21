@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use crate::model::{Provider, ProviderConfig};
 use crate::shortcuts::{self, ShortcutAction};
 
+const KEYCHAIN_SERVICE: &str = "stoa";
+
 pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,33 +158,79 @@ impl AppConfig {
         dir.join("config.json")
     }
 
+    fn keychain_get(key: &str) -> Option<String> {
+        keyring::Entry::new(KEYCHAIN_SERVICE, key)
+            .and_then(|e| e.get_password())
+            .ok()
+            .filter(|s| !s.is_empty())
+    }
+
+    fn keychain_set(key: &str, value: &str) {
+        if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, key) {
+            if value.is_empty() {
+                let _ = entry.delete_credential();
+            } else {
+                let _ = entry.set_password(value);
+            }
+        }
+    }
+
+    fn load_keys_from_keychain(&mut self) {
+        if let Some(k) = Self::keychain_get("openai_api_key") { self.openai.api_key = k; }
+        if let Some(k) = Self::keychain_get("anthropic_api_key") { self.anthropic.api_key = k; }
+        if let Some(k) = Self::keychain_get("openrouter_api_key") { self.openrouter.api_key = k; }
+    }
+
+    fn save_keys_to_keychain(&self) {
+        Self::keychain_set("openai_api_key", &self.openai.api_key);
+        Self::keychain_set("anthropic_api_key", &self.anthropic.api_key);
+        Self::keychain_set("openrouter_api_key", &self.openrouter.api_key);
+    }
+
     pub fn load() -> Self {
         let path = Self::config_path();
-        if path.exists() {
+        let mut config = if path.exists() {
             if let Ok(data) = std::fs::read_to_string(&path) {
                 if let Ok(mut config) = serde_json::from_str::<AppConfig>(&data) {
                     config.migrate();
-                    return config;
-                }
-                if let Ok(mut legacy) = serde_json::from_str::<serde_json::Value>(&data) {
+                    config
+                } else if let Ok(mut legacy) = serde_json::from_str::<serde_json::Value>(&data) {
                     let schema_version = legacy["schema_version"].as_u64().unwrap_or(1);
                     if schema_version < CONFIG_SCHEMA_VERSION as u64 {
                         legacy["schema_version"] = serde_json::json!(CONFIG_SCHEMA_VERSION);
                     }
                     if let Ok(mut config) = serde_json::from_value::<AppConfig>(legacy) {
                         config.migrate();
-                        return config;
+                        config
+                    } else {
+                        Self::default()
                     }
+                } else {
+                    Self::default()
                 }
+            } else {
+                Self::default()
             }
-        }
-        Self::default()
+        } else {
+            Self::default()
+        };
+
+        // Keychain keys override config file keys (migrate plaintext -> keychain)
+        config.load_keys_from_keychain();
+        config
     }
 
     pub fn save(&self) {
+        // Store API keys in OS keychain
+        self.save_keys_to_keychain();
+
         let path = Self::config_path();
         let mut copy = self.clone();
         copy.schema_version = CONFIG_SCHEMA_VERSION;
+        // Clear API keys from config file (they're in the keychain now)
+        copy.openai.api_key.clear();
+        copy.anthropic.api_key.clear();
+        copy.openrouter.api_key.clear();
         if let Ok(json) = serde_json::to_string_pretty(&copy) {
             std::fs::write(path, json).ok();
         }
